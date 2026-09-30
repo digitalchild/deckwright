@@ -1,0 +1,1161 @@
+{
+ "schema_version": 1,
+ "id": "sample",
+ "name": "Deckwright sample",
+ "description": "Neutral 16:9 sample template: white, dark grey and one blue accent, Manrope.",
+ "source_sha256": "dc68b38170fcdad074049e192bd6894d87cc908425724b2fb2d107d5a39c3535",
+ "generator_version": "sample-0.1",
+ "status": "confirmed",
+ "confirmed_at": null,
+ "brand": {
+  "font": "Manrope",
+  "replace_font": null,
+  "diagram_fonts": {
+   "Regular": "Manrope-Regular.ttf",
+   "Medium": "ManropeMedium-Regular.ttf",
+   "SemiBold": "Manrope-Bold.ttf"
+  },
+  "highlight": {
+   "theme_color": "accent1",
+   "hex": [
+    "2F6FEB"
+   ]
+  },
+  "colors": {
+   "text": "1F2328",
+   "white": "FFFFFF",
+   "grey": "F2F3F5",
+   "accent": "2F6FEB"
+  },
+  "palette": {
+   "text": "1F2328",
+   "background": "FFFFFF",
+   "accent": "2F6FEB",
+   "accent_tints": [
+    "EAF1FE",
+    "D3E2FD",
+    "A9C6FB"
+   ],
+   "accent_dark": "1A4DB3",
+   "accent_darkest": "0B2A66"
+  },
+  "fonts": {
+   "headline": "Manrope Medium",
+   "body": "Manrope",
+   "mono": "Geist Mono SemiBold"
+  },
+  "type_scale_pt": {
+   "title": 54.0,
+   "headline": 36.0,
+   "body": 20.0,
+   "caption": 16.0
+  },
+  "slide_size_in": [
+   13.333,
+   7.5
+  ],
+  "rules": [
+   "Use one accent colour. Mark a few key words with **double asterisks**.",
+   "Keep card titles under 10 words.",
+   "Vary layouts. Do not put every section on the same text slide."
+  ]
+ },
+ "footer": {
+  "slide": 2,
+  "shape": 2
+ },
+ "guide": "Good rhythm: title -> agenda -> section -> content slides -> closing.",
+ "layouts": [
+  {
+   "id": "title",
+   "name": "Title (dark)",
+   "kind": "title",
+   "source": "slide",
+   "ref": 2,
+   "description": "Dark cover with a large title, a subtitle and the presenter at the top.",
+   "use_when": "First slide of a deck.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": true,
+     "highlight": true,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "subtitle",
+     "target": 4,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "presenter",
+     "target": 5,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [
+    "cover"
+   ],
+   "footer": true,
+   "example": {
+    "title": "A clear title with a **highlight**",
+    "subtitle": "Subtitle or event name",
+    "presenter": "Presenter name\nCompany"
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "section",
+   "name": "Section opener",
+   "kind": "section",
+   "source": "slide",
+   "ref": 3,
+   "description": "Light slide with a small label, a large title and a short subline.",
+   "use_when": "Start a new section of the talk.",
+   "fields": [
+    {
+     "name": "label",
+     "target": 3,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "title",
+     "target": 4,
+     "type": "text",
+     "required": true,
+     "highlight": true,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "subtitle",
+     "target": 5,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "label": "Section 1",
+    "title": "Section **title**",
+    "subtitle": "One short line that frames the section."
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "statement",
+   "name": "Statement",
+   "kind": "statement",
+   "source": "slide",
+   "ref": 4,
+   "description": "One large sentence with a highlight, vertically centred.",
+   "use_when": "A key message, transition or provocation.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": true,
+     "highlight": true,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "title": "One sentence that carries the **key message**"
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "agenda",
+   "name": "Agenda",
+   "kind": "agenda",
+   "source": "slide",
+   "ref": 5,
+   "description": "Title at the left, numbered list of up to four items at the right.",
+   "use_when": "Outline of the talk with up to four short items.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": "Agenda",
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": {
+    "targets": {
+     "number": [
+      4,
+      6,
+      8,
+      10
+     ],
+     "label": [
+      5,
+      7,
+      9,
+      11
+     ]
+    },
+    "min": 1,
+    "max": 4,
+    "required": [
+     "label"
+    ],
+    "auto": {
+     "number": "index2"
+    },
+    "extra": {},
+    "types": {},
+    "hints": {},
+    "fixed_note": ""
+   },
+   "handler": null,
+   "strip": [],
+   "aliases": [
+    "steps"
+   ],
+   "footer": true,
+   "example": {
+    "items": [
+     {
+      "label": "Opening"
+     },
+     {
+      "label": "The problem"
+     },
+     {
+      "label": "The solution"
+     },
+     {
+      "label": "Next steps"
+     }
+    ]
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "text",
+   "name": "Title and text",
+   "kind": "text",
+   "source": "slide",
+   "ref": 6,
+   "description": "Title at the left, one paragraph block at the right.",
+   "use_when": "A single idea explained in a short paragraph.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "body",
+     "target": 4,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "Up to ~60 words.",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "title": "Title and text",
+    "body": "A short paragraph that explains one idea. Keep it under sixty words so the audience can read it while you speak."
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "rows-3",
+   "name": "Three titled rows",
+   "kind": "rows",
+   "source": "slide",
+   "ref": 7,
+   "description": "Up to three rows. Each row has a title at the left and a paragraph at the right.",
+   "use_when": "Two or three points that each need a paragraph.",
+   "fields": [],
+   "items": {
+    "targets": {
+     "title": [
+      3,
+      5,
+      7
+     ],
+     "body": [
+      4,
+      6,
+      8
+     ]
+    },
+    "min": 1,
+    "max": 3,
+    "required": [
+     "title"
+    ],
+    "auto": {},
+    "extra": {},
+    "types": {},
+    "hints": {},
+    "fixed_note": ""
+   },
+   "handler": null,
+   "strip": [],
+   "aliases": [
+    "points"
+   ],
+   "footer": true,
+   "example": {
+    "items": [
+     {
+      "title": "Point one",
+      "body": "One or two short sentences that support the point on this slide."
+     },
+     {
+      "title": "Point two",
+      "body": "One or two short sentences that support the point on this slide."
+     },
+     {
+      "title": "Point three",
+      "body": "One or two short sentences that support the point on this slide."
+     }
+    ]
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "cards-3",
+   "name": "Three cards",
+   "kind": "cards",
+   "source": "slide",
+   "ref": 8,
+   "description": "Headline and three grey cards, each with a title and a paragraph.",
+   "use_when": "Exactly three points that each need a sentence or two.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": {
+    "targets": {
+     "title": [
+      5,
+      8,
+      11
+     ],
+     "body": [
+      6,
+      9,
+      12
+     ]
+    },
+    "min": 3,
+    "max": 3,
+    "required": [
+     "title"
+    ],
+    "auto": {},
+    "extra": {
+     "card": [
+      4,
+      7,
+      10
+     ]
+    },
+    "types": {},
+    "hints": {},
+    "fixed_note": "Three cards are part of the design. Provide exactly three items."
+   },
+   "handler": null,
+   "strip": [],
+   "aliases": [
+    "points"
+   ],
+   "footer": true,
+   "example": {
+    "title": "Three cards",
+    "items": [
+     {
+      "title": "First card",
+      "body": "One or two short sentences that support the point on this slide."
+     },
+     {
+      "title": "Second card",
+      "body": "One or two short sentences that support the point on this slide."
+     },
+     {
+      "title": "Third card",
+      "body": "One or two short sentences that support the point on this slide."
+     }
+    ]
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "text-image",
+   "name": "Text with image",
+   "kind": "text-image",
+   "source": "slide",
+   "ref": 9,
+   "description": "Title and paragraph at the left, image at the right.",
+   "use_when": "A point supported by a photo or screenshot.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "body",
+     "target": 4,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "image",
+     "target": 5,
+     "type": "image",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "title": "Text with an image",
+    "body": "One or two short sentences that support the point on this slide.",
+    "image": "https://example.com/photo.jpg"
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "images-2",
+   "name": "Two images",
+   "kind": "image",
+   "source": "slide",
+   "ref": 10,
+   "description": "Two framed images side by side.",
+   "use_when": "Two photos or screenshots with margins.",
+   "fields": [],
+   "items": {
+    "targets": {
+     "image": [
+      3,
+      4
+     ]
+    },
+    "min": 2,
+    "max": 2,
+    "required": [
+     "image"
+    ],
+    "auto": {},
+    "extra": {},
+    "types": {
+     "image": "image"
+    },
+    "hints": {},
+    "fixed_note": ""
+   },
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "items": [
+     {
+      "image": "https://example.com/photo.jpg"
+     },
+     {
+      "image": "https://example.com/photo.jpg"
+     }
+    ]
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "big-number",
+   "name": "Big number",
+   "kind": "stat",
+   "source": "slide",
+   "ref": 11,
+   "description": "Very large number at the left and a label at the right.",
+   "use_when": "One key metric.",
+   "fields": [
+    {
+     "name": "value",
+     "target": 3,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "e.g. 48%",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "label",
+     "target": 4,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "value": "48%",
+    "label": "of teams use the template"
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "stats-3",
+   "name": "Three stats",
+   "kind": "stats",
+   "source": "slide",
+   "ref": 12,
+   "description": "Headline, then three accent numbers with a short label under each.",
+   "use_when": "Two or three supporting metrics.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": {
+    "targets": {
+     "value": [
+      4,
+      6,
+      8
+     ],
+     "label": [
+      5,
+      7,
+      9
+     ]
+    },
+    "min": 2,
+    "max": 3,
+    "required": [
+     "value"
+    ],
+    "auto": {},
+    "extra": {},
+    "types": {},
+    "hints": {},
+    "fixed_note": ""
+   },
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "title": "Three numbers",
+    "items": [
+     {
+      "value": "12",
+      "label": "new layouts"
+     },
+     {
+      "value": "3x",
+      "label": "faster decks"
+     },
+     {
+      "value": "99%",
+      "label": "on brand"
+     }
+    ]
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "bar-chart",
+   "name": "Bar chart (percentages)",
+   "kind": "chart",
+   "source": "slide",
+   "ref": 13,
+   "description": "Two or three horizontal bars sized to their percentage, with the value inside each bar.",
+   "use_when": "Compare two or three percentages.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "subtitle",
+     "target": 4,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": {
+    "targets": {
+     "value": [
+      6,
+      8,
+      10
+     ]
+    },
+    "min": 2,
+    "max": 3,
+    "required": [
+     "value"
+    ],
+    "auto": {},
+    "extra": {
+     "bar": [
+      5,
+      7,
+      9
+     ]
+    },
+    "types": {},
+    "hints": {
+     "value": "Percentage, e.g. 84%. Bar width follows the number."
+    },
+    "fixed_note": ""
+   },
+   "handler": {
+    "type": "bars",
+    "max_width_in": 11.733,
+    "min_width_in": 1.6
+   },
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "title": "Bar chart",
+    "subtitle": "Share of teams, in percent",
+    "items": [
+     {
+      "value": "35%"
+     },
+     {
+      "value": "80%"
+     },
+     {
+      "value": "55%"
+     }
+    ]
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "quote",
+   "name": "Quote",
+   "kind": "quote",
+   "source": "slide",
+   "ref": 14,
+   "description": "Large accent quote mark, large quote text and the attribution below.",
+   "use_when": "A customer or expert quote.",
+   "fields": [
+    {
+     "name": "quote",
+     "target": 4,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "Keep it under ~25 words.",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "attribution",
+     "target": 5,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "quote": "A short quote from a customer or an expert goes here.",
+    "attribution": "Name, Role"
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "timeline",
+   "name": "Timeline",
+   "kind": "timeline",
+   "source": "slide",
+   "ref": 15,
+   "description": "Title and up to four milestones on a horizontal line.",
+   "use_when": "Two to four dated milestones.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": "Timeline",
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": {
+    "targets": {
+     "label": [
+      6,
+      9,
+      12,
+      15
+     ],
+     "body": [
+      7,
+      10,
+      13,
+      16
+     ]
+    },
+    "min": 2,
+    "max": 4,
+    "required": [
+     "label"
+    ],
+    "auto": {},
+    "extra": {
+     "dot": [
+      5,
+      8,
+      11,
+      14
+     ]
+    },
+    "types": {},
+    "hints": {},
+    "fixed_note": ""
+   },
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "title": "Timeline",
+    "items": [
+     {
+      "label": "Q1",
+      "body": "A short milestone."
+     },
+     {
+      "label": "Q2",
+      "body": "A short milestone."
+     },
+     {
+      "label": "Q3",
+      "body": "A short milestone."
+     },
+     {
+      "label": "Q4",
+      "body": "A short milestone."
+     }
+    ]
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "code",
+   "name": "Code sample",
+   "kind": "code",
+   "source": "slide",
+   "ref": 16,
+   "description": "Title and subtitle at the left, dark code window with file name and line numbers at the right.",
+   "use_when": "Show a short code or JSON snippet (up to ~20 lines).",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "subtitle",
+     "target": 4,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "filename",
+     "target": 6,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": "example.js",
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "code",
+     "target": 8,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "Plain text. Newlines become lines; line numbers are added.",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": {
+    "type": "code",
+    "line_numbers": 7,
+    "max_lines": 20
+   },
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "title": "Code sample",
+    "subtitle": "What the code does, in one line.",
+    "filename": "example.js",
+    "code": "function greet(name) {\n  return `Hello, ${name}`;\n}"
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "closing",
+   "name": "Thank you",
+   "kind": "closing",
+   "source": "slide",
+   "ref": 17,
+   "description": "Dark slide with a large centred closing line.",
+   "use_when": "Last slide.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 3,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": "Thank you",
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {},
+   "confidence": 1.0
+  },
+  {
+   "id": "title-content",
+   "name": "Title and content",
+   "kind": "text",
+   "source": "layout",
+   "ref": 0,
+   "description": "Title at the top and a text block below.",
+   "use_when": "A title and several short paragraphs or bullets.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 0,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "body",
+     "target": 1,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "title": "Title and content",
+    "body": [
+     "First point",
+     "Second point",
+     "Third point"
+    ]
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "section-header",
+   "name": "Section header",
+   "kind": "section",
+   "source": "layout",
+   "ref": 1,
+   "description": "Plain section header with a title and a short line.",
+   "use_when": "A quiet section break.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 0,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "subtitle",
+     "target": 1,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "title": "Section header",
+    "subtitle": "A short line"
+   },
+   "confidence": 1.0
+  },
+  {
+   "id": "image-caption",
+   "name": "Image with caption",
+   "kind": "image",
+   "source": "layout",
+   "ref": 3,
+   "description": "Title, one large image and a caption.",
+   "use_when": "One image that needs a title and a caption.",
+   "fields": [
+    {
+     "name": "title",
+     "target": 0,
+     "type": "text",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "image",
+     "target": 1,
+     "type": "image",
+     "required": true,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    },
+    {
+     "name": "caption",
+     "target": 2,
+     "type": "text",
+     "required": false,
+     "highlight": false,
+     "paragraph": null,
+     "default": null,
+     "hint": "",
+     "also_remove": [],
+     "width_in": null
+    }
+   ],
+   "items": null,
+   "handler": null,
+   "strip": [],
+   "aliases": [],
+   "footer": true,
+   "example": {
+    "title": "Image with caption",
+    "image": "https://example.com/photo.jpg",
+    "caption": "A short caption"
+   },
+   "confidence": 1.0
+  }
+ ],
+ "issues": []
+}

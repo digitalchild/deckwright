@@ -1,0 +1,101 @@
+{
+  "title": "Sample deck",
+  "template": "sample",
+  "slides": [
+    {
+      "kind": "title",
+      "title": "A clear title with a **highlight**",
+      "subtitle": "Deckwright sample deck",
+      "presenter": "Jane Doe\nExample Inc."
+    },
+    {
+      "kind": "agenda",
+      "items": [
+        {"label": "Why this matters"},
+        {"label": "How it works"},
+        {"label": "What it looks like"},
+        {"label": "Next steps"}
+      ]
+    },
+    {
+      "kind": "section",
+      "label": "Section 1",
+      "title": "Setting the **scene**",
+      "subtitle": "A short line that frames the section."
+    },
+    {
+      "kind": "statement",
+      "title": "One sentence that carries the **key message**"
+    },
+    {
+      "kind": "text",
+      "title": "Title and text",
+      "body": "A short paragraph that explains one idea. Keep it under sixty words so the audience can read it while you speak."
+    },
+    {
+      "kind": "points",
+      "title": "Three points",
+      "items": [
+        {"title": "Point one", "body": "One or two short sentences that support the point on this slide."},
+        {"title": "Point two", "body": "One or two short sentences that support the point on this slide."},
+        {"title": "Point three", "body": "One or two short sentences that support the point on this slide."}
+      ]
+    },
+    {
+      "kind": "text-image",
+      "title": "Text with an image",
+      "body": "One or two short sentences that support the point on this slide.",
+      "image": "placeholder: Product screenshot"
+    },
+    {
+      "kind": "stat",
+      "value": "48%",
+      "label": "of teams use the template"
+    },
+    {
+      "kind": "stats",
+      "title": "Three numbers",
+      "items": [
+        {"value": "12", "label": "new layouts"},
+        {"value": "3x", "label": "faster decks"},
+        {"value": "99%", "label": "on brand"}
+      ]
+    },
+    {
+      "kind": "chart",
+      "title": "Bar chart",
+      "subtitle": "Share of teams, in percent",
+      "items": [
+        {"value": "35%"},
+        {"value": "80%"},
+        {"value": "55%"}
+      ]
+    },
+    {
+      "kind": "quote",
+      "quote": "A short quote from a customer or an expert goes here.",
+      "attribution": "Name, Role"
+    },
+    {
+      "kind": "timeline",
+      "title": "Timeline",
+      "items": [
+        {"label": "Q1", "body": "A short milestone."},
+        {"label": "Q2", "body": "A short milestone."},
+        {"label": "Q3", "body": "A short milestone."},
+        {"label": "Q4", "body": "A short milestone."}
+      ]
+    },
+    {
+      "kind": "code",
+      "title": "Code sample",
+      "subtitle": "What the code does, in one line.",
+      "filename": "example.js",
+      "code": "function greet(name) {\n  return `Hello, ${name}`;\n}"
+    },
+    {
+      "kind": "closing",
+      "title": "Thank you"
+    }
+  ]
+}

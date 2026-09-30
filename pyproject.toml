@@ -1,0 +1,47 @@
+[project]
+name = "deckwright"
+version = "0.1.0"
+description = "Build on-brand presentations from any .pptx template: CLI, HTTP API and MCP server"
+readme = "README.md"
+authors = [
+    { name = "Jamie Madden", email = "digitalchild@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.141.1",
+    "mcp[cli]>=2.2.0",
+    "pydantic>=2.13.5",
+    "python-pptx>=1.0.2",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+deckwright = "deckwright.cli:main"
+
+[project.optional-dependencies]
+google = [
+    "google-api-python-client>=2.200.0",
+    "google-auth-oauthlib>=1.5.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "fonttools>=4.66.0",
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501", "E741"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,723 @@
+{
+ "$defs": {
+  "BarsHandler": {
+   "additionalProperties": false,
+   "description": "Horizontal bars sized to a percentage. Needs items.extra['bar'].",
+   "properties": {
+    "type": {
+     "const": "bars",
+     "default": "bars",
+     "title": "Type",
+     "type": "string"
+    },
+    "max_width_in": {
+     "title": "Max Width In",
+     "type": "number"
+    },
+    "min_width_in": {
+     "title": "Min Width In",
+     "type": "number"
+    }
+   },
+   "required": [
+    "max_width_in",
+    "min_width_in"
+   ],
+   "title": "BarsHandler",
+   "type": "object"
+  },
+  "Brand": {
+   "additionalProperties": false,
+   "properties": {
+    "font": {
+     "description": "Font set on runs that would fall back to replace_font or the theme font.",
+     "title": "Font",
+     "type": "string"
+    },
+    "replace_font": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": "Arial",
+     "description": "Theme font the template sets by mistake, if any.",
+     "title": "Replace Font"
+    },
+    "diagram_fonts": {
+     "additionalProperties": {
+      "type": "string"
+     },
+     "description": "Weight -> font file name in the pack fonts/ folder.",
+     "propertyNames": {
+      "enum": [
+       "Regular",
+       "Medium",
+       "SemiBold"
+      ]
+     },
+     "title": "Diagram Fonts",
+     "type": "object"
+    },
+    "highlight": {
+     "$ref": "#/$defs/Highlight",
+     "default": {
+      "theme_color": "accent1",
+      "hex": []
+     }
+    },
+    "colors": {
+     "additionalProperties": {
+      "type": "string"
+     },
+     "description": "Named colours for the brand guide.",
+     "title": "Colors",
+     "type": "object"
+    },
+    "palette": {
+     "$ref": "#/$defs/Palette"
+    },
+    "fonts": {
+     "additionalProperties": true,
+     "description": "Font roles for the brand guide.",
+     "title": "Fonts",
+     "type": "object"
+    },
+    "type_scale_pt": {
+     "additionalProperties": {
+      "type": "number"
+     },
+     "title": "Type Scale Pt",
+     "type": "object"
+    },
+    "slide_size_in": {
+     "maxItems": 2,
+     "minItems": 2,
+     "prefixItems": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "number"
+      }
+     ],
+     "title": "Slide Size In",
+     "type": "array"
+    },
+    "rules": {
+     "default": [],
+     "items": {
+      "type": "string"
+     },
+     "title": "Rules",
+     "type": "array"
+    }
+   },
+   "required": [
+    "font",
+    "palette",
+    "slide_size_in"
+   ],
+   "title": "Brand",
+   "type": "object"
+  },
+  "CodeHandler": {
+   "additionalProperties": false,
+   "description": "Code window: one line per paragraph, optional line-number shape.",
+   "properties": {
+    "type": {
+     "const": "code",
+     "default": "code",
+     "title": "Type",
+     "type": "string"
+    },
+    "line_numbers": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Shape id of the line-number box.",
+     "title": "Line Numbers"
+    },
+    "max_lines": {
+     "default": 20,
+     "title": "Max Lines",
+     "type": "integer"
+    }
+   },
+   "title": "CodeHandler",
+   "type": "object"
+  },
+  "ColumnsHandler": {
+   "additionalProperties": false,
+   "description": "Vertical columns sized to a percentage, growing up from a baseline. Needs items.extra['column'].",
+   "properties": {
+    "type": {
+     "const": "columns",
+     "default": "columns",
+     "title": "Type",
+     "type": "string"
+    },
+    "baseline_in": {
+     "title": "Baseline In",
+     "type": "number"
+    },
+    "max_height_in": {
+     "title": "Max Height In",
+     "type": "number"
+    },
+    "min_height_in": {
+     "title": "Min Height In",
+     "type": "number"
+    }
+   },
+   "required": [
+    "baseline_in",
+    "max_height_in",
+    "min_height_in"
+   ],
+   "title": "ColumnsHandler",
+   "type": "object"
+  },
+  "FieldSpec": {
+   "additionalProperties": false,
+   "properties": {
+    "name": {
+     "title": "Name",
+     "type": "string"
+    },
+    "target": {
+     "description": "Shape id (slide source) or placeholder idx (layout source).",
+     "title": "Target",
+     "type": "integer"
+    },
+    "type": {
+     "default": "text",
+     "enum": [
+      "text",
+      "image"
+     ],
+     "title": "Type",
+     "type": "string"
+    },
+    "required": {
+     "default": false,
+     "title": "Required",
+     "type": "boolean"
+    },
+    "highlight": {
+     "default": false,
+     "description": "Allows **highlight** markup.",
+     "title": "Highlight",
+     "type": "boolean"
+    },
+    "paragraph": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Template paragraph to use when several fields share one shape.",
+     "title": "Paragraph"
+    },
+    "default": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Default"
+    },
+    "hint": {
+     "default": "",
+     "title": "Hint",
+     "type": "string"
+    },
+    "also_remove": {
+     "default": [],
+     "description": "Shapes removed together with an empty field.",
+     "items": {
+      "type": "integer"
+     },
+     "title": "Also Remove",
+     "type": "array"
+    },
+    "width_in": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Widen the box to this width in inches.",
+     "title": "Width In"
+    }
+   },
+   "required": [
+    "name",
+    "target"
+   ],
+   "title": "FieldSpec",
+   "type": "object"
+  },
+  "Footer": {
+   "additionalProperties": false,
+   "properties": {
+    "slide": {
+     "description": "1-based slide number that holds the footer shape.",
+     "title": "Slide",
+     "type": "integer"
+    },
+    "shape": {
+     "description": "Shape id of the footer on that slide.",
+     "title": "Shape",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "slide",
+    "shape"
+   ],
+   "title": "Footer",
+   "type": "object"
+  },
+  "Highlight": {
+   "additionalProperties": false,
+   "properties": {
+    "theme_color": {
+     "default": "accent1",
+     "description": "Theme colour slot used for new highlight runs.",
+     "title": "Theme Color",
+     "type": "string"
+    },
+    "hex": {
+     "default": [],
+     "description": "sRGB values that also count as the highlight colour.",
+     "items": {
+      "type": "string"
+     },
+     "title": "Hex",
+     "type": "array"
+    }
+   },
+   "title": "Highlight",
+   "type": "object"
+  },
+  "Issue": {
+   "additionalProperties": false,
+   "properties": {
+    "layout": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Layout"
+    },
+    "message": {
+     "title": "Message",
+     "type": "string"
+    }
+   },
+   "required": [
+    "message"
+   ],
+   "title": "Issue",
+   "type": "object"
+  },
+  "ItemsSpec": {
+   "additionalProperties": false,
+   "properties": {
+    "targets": {
+     "additionalProperties": {
+      "items": {
+       "type": "integer"
+      },
+      "type": "array"
+     },
+     "description": "Item field -> target per item position.",
+     "title": "Targets",
+     "type": "object"
+    },
+    "min": {
+     "title": "Min",
+     "type": "integer"
+    },
+    "max": {
+     "title": "Max",
+     "type": "integer"
+    },
+    "required": {
+     "default": [],
+     "items": {
+      "type": "string"
+     },
+     "title": "Required",
+     "type": "array"
+    },
+    "auto": {
+     "additionalProperties": {
+      "const": "index2",
+      "type": "string"
+     },
+     "description": "Item field -> generated value.",
+     "title": "Auto",
+     "type": "object"
+    },
+    "extra": {
+     "additionalProperties": {
+      "items": {
+       "type": "integer"
+      },
+      "type": "array"
+     },
+     "description": "Non-content shapes per item position.",
+     "title": "Extra",
+     "type": "object"
+    },
+    "types": {
+     "additionalProperties": {
+      "enum": [
+       "text",
+       "image"
+      ],
+      "type": "string"
+     },
+     "title": "Types",
+     "type": "object"
+    },
+    "hints": {
+     "additionalProperties": {
+      "type": "string"
+     },
+     "title": "Hints",
+     "type": "object"
+    },
+    "fixed_note": {
+     "default": "",
+     "title": "Fixed Note",
+     "type": "string"
+    }
+   },
+   "required": [
+    "targets",
+    "min",
+    "max"
+   ],
+   "title": "ItemsSpec",
+   "type": "object"
+  },
+  "LayoutSpec": {
+   "additionalProperties": false,
+   "properties": {
+    "id": {
+     "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+     "title": "Id",
+     "type": "string"
+    },
+    "name": {
+     "title": "Name",
+     "type": "string"
+    },
+    "kind": {
+     "title": "Kind",
+     "type": "string"
+    },
+    "source": {
+     "description": "Clone a sample slide, or use a master layout.",
+     "enum": [
+      "slide",
+      "layout"
+     ],
+     "title": "Source",
+     "type": "string"
+    },
+    "ref": {
+     "description": "1-based slide number, or 0-based master layout index.",
+     "title": "Ref",
+     "type": "integer"
+    },
+    "description": {
+     "title": "Description",
+     "type": "string"
+    },
+    "use_when": {
+     "title": "Use When",
+     "type": "string"
+    },
+    "fields": {
+     "default": [],
+     "items": {
+      "$ref": "#/$defs/FieldSpec"
+     },
+     "title": "Fields",
+     "type": "array"
+    },
+    "items": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/ItemsSpec"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "handler": {
+     "anyOf": [
+      {
+       "discriminator": {
+        "mapping": {
+         "bars": "#/$defs/BarsHandler",
+         "code": "#/$defs/CodeHandler",
+         "columns": "#/$defs/ColumnsHandler"
+        },
+        "propertyName": "type"
+       },
+       "oneOf": [
+        {
+         "$ref": "#/$defs/BarsHandler"
+        },
+        {
+         "$ref": "#/$defs/ColumnsHandler"
+        },
+        {
+         "$ref": "#/$defs/CodeHandler"
+        }
+       ]
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Handler"
+    },
+    "strip": {
+     "default": [],
+     "description": "Shapes always removed.",
+     "items": {
+      "type": "integer"
+     },
+     "title": "Strip",
+     "type": "array"
+    },
+    "aliases": {
+     "default": [],
+     "items": {
+      "type": "string"
+     },
+     "title": "Aliases",
+     "type": "array"
+    },
+    "footer": {
+     "default": true,
+     "description": "Add the pack footer (master layouts only).",
+     "title": "Footer",
+     "type": "boolean"
+    },
+    "example": {
+     "additionalProperties": true,
+     "title": "Example",
+     "type": "object"
+    },
+    "confidence": {
+     "default": 1.0,
+     "description": "Generator confidence in kind and fields.",
+     "maximum": 1,
+     "minimum": 0,
+     "title": "Confidence",
+     "type": "number"
+    }
+   },
+   "required": [
+    "id",
+    "name",
+    "kind",
+    "source",
+    "ref",
+    "description",
+    "use_when"
+   ],
+   "title": "LayoutSpec",
+   "type": "object"
+  },
+  "Palette": {
+   "additionalProperties": false,
+   "description": "Colour roles (6-digit hex, no #). Diagrams and placeholders use these.",
+   "properties": {
+    "text": {
+     "title": "Text",
+     "type": "string"
+    },
+    "background": {
+     "title": "Background",
+     "type": "string"
+    },
+    "accent": {
+     "title": "Accent",
+     "type": "string"
+    },
+    "accent_tints": {
+     "description": "Light to less light: lightest, placeholder fill, strong tint.",
+     "maxItems": 3,
+     "minItems": 3,
+     "prefixItems": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "string"
+      }
+     ],
+     "title": "Accent Tints",
+     "type": "array"
+    },
+    "accent_dark": {
+     "title": "Accent Dark",
+     "type": "string"
+    },
+    "accent_darkest": {
+     "title": "Accent Darkest",
+     "type": "string"
+    }
+   },
+   "required": [
+    "text",
+    "background",
+    "accent",
+    "accent_tints",
+    "accent_dark",
+    "accent_darkest"
+   ],
+   "title": "Palette",
+   "type": "object"
+  }
+ },
+ "additionalProperties": false,
+ "properties": {
+  "schema_version": {
+   "const": 1,
+   "default": 1,
+   "title": "Schema Version",
+   "type": "integer"
+  },
+  "id": {
+   "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+   "title": "Id",
+   "type": "string"
+  },
+  "name": {
+   "title": "Name",
+   "type": "string"
+  },
+  "description": {
+   "default": "",
+   "title": "Description",
+   "type": "string"
+  },
+  "source_sha256": {
+   "pattern": "^[0-9a-f]{64}$",
+   "title": "Source Sha256",
+   "type": "string"
+  },
+  "generator_version": {
+   "title": "Generator Version",
+   "type": "string"
+  },
+  "status": {
+   "default": "draft",
+   "enum": [
+    "draft",
+    "confirmed"
+   ],
+   "title": "Status",
+   "type": "string"
+  },
+  "confirmed_at": {
+   "anyOf": [
+    {
+     "format": "date-time",
+     "type": "string"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null,
+   "title": "Confirmed At"
+  },
+  "brand": {
+   "$ref": "#/$defs/Brand"
+  },
+  "footer": {
+   "anyOf": [
+    {
+     "$ref": "#/$defs/Footer"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null
+  },
+  "guide": {
+   "default": "",
+   "description": "Deck-writing advice for agents, e.g. a good slide order.",
+   "title": "Guide",
+   "type": "string"
+  },
+  "layouts": {
+   "items": {
+    "$ref": "#/$defs/LayoutSpec"
+   },
+   "title": "Layouts",
+   "type": "array"
+  },
+  "issues": {
+   "default": [],
+   "items": {
+    "$ref": "#/$defs/Issue"
+   },
+   "title": "Issues",
+   "type": "array"
+  }
+ },
+ "required": [
+  "id",
+  "name",
+  "source_sha256",
+  "generator_version",
+  "brand",
+  "layouts"
+ ],
+ "title": "Pack",
+ "type": "object"
+}

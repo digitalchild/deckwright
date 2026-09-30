@@ -1,0 +1,57 @@
+{
+  "title": "Diagrams and placeholders",
+  "template": "sample",
+  "slides": [
+    {
+      "layout": "image-caption",
+      "title": "How a ticket reaches the AI agent",
+      "image": {
+        "excalidraw": {
+          "elements": [
+            {"type": "rectangle", "id": "webhook", "x": 0, "y": 0, "width": 220, "height": 90,
+             "roundness": {"type": 3}, "strokeColor": "#000000", "backgroundColor": "#EAF1FE",
+             "label": {"text": "Webhook"}},
+            {"type": "arrow", "x": 230, "y": 45, "points": [[0, 0], [120, 0]], "strokeColor": "#000000",
+             "endArrowhead": "triangle"},
+            {"type": "rectangle", "id": "agent", "x": 360, "y": 0, "width": 220, "height": 90,
+             "roundness": {"type": 3}, "strokeColor": "#000000", "backgroundColor": "#2F6FEB",
+             "label": {"text": "AI agent"}}
+          ]
+        }
+      },
+      "caption": "The webhook hands the raw ticket to the AI agent for triage."
+    },
+    {
+      "layout": "text-image",
+      "title": "Every ticket gets a first response",
+      "body": "The AI agent reads the ticket and drafts a reply before a person ever sees it.",
+      "image": "placeholder: Screenshot of the support queue"
+    },
+    {
+      "layout": "images-2",
+      "items": [
+        {"image": {"placeholder": "Screenshot of the ticket detail view"}},
+        {"image": "placeholder: Screenshot of the drafted reply"}
+      ]
+    },
+    {
+      "layout": "text-image",
+      "title": "Routing and review",
+      "body": "Tickets the agent cannot close move to routing, then to a human for review.",
+      "image": {
+        "excalidraw": {
+          "elements": [
+            {"type": "rectangle", "id": "route", "x": 0, "y": 0, "width": 220, "height": 90,
+             "roundness": {"type": 3}, "strokeColor": "#000000", "backgroundColor": "#EAF1FE",
+             "label": {"text": "Route ticket"}},
+            {"type": "arrow", "x": 230, "y": 45, "points": [[0, 0], [120, 0]], "strokeColor": "#000000",
+             "endArrowhead": "triangle"},
+            {"type": "rectangle", "id": "review", "x": 360, "y": 0, "width": 220, "height": 90,
+             "roundness": {"type": 3}, "strokeColor": "#000000", "backgroundColor": "#2F6FEB",
+             "label": {"text": "Human review"}}
+          ]
+        }
+      }
+    }
+  ]
+}
