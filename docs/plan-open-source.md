@@ -1,6 +1,6 @@
 # Plan: Deckwright, an open source, multi-template deck builder
 
-Status: phases 1 to 7 done, phase 8 in progress. Replaces section 1 of `docs/TODO.md`.
+Status: all phases done (v0.1.0). Google Slides output is experimental. Replaces section 1 of `docs/TODO.md`.
 
 ## Goal
 
@@ -169,7 +169,7 @@ The kinds from TODO 1.3 become a documented contract (`docs/kinds.md`): `title`,
 
 Each phase ends with the full test suite and lint passing.
 
-Phases 1 to 7: done. Phase 8: in progress.
+Phases 1 to 8: done.
 
 1. **Rename and pack model.** Rename the package `slider` to `deckwright` (module, CLI entry point, env vars, config and cache paths, MCP server name). Then: Pydantic models for `pack.json`, JSON Schema export, `Template` loader, discovery, hash check. Convert today's `catalog.py` and `brand.py` into the private template's `pack.json` once, by script, as a fixture.
 2. **Generic core.** Pass `Template` everywhere. Move every item in the "tied to the original conference template" table into the pack. Tests run against that fixture pack and give the same results as today.

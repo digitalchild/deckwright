@@ -5,7 +5,8 @@ Status on 2026-09-30. Read this first when you pick up the work.
 ## Current state
 
 - Phases 1 to 7 of [plan-open-source.md](plan-open-source.md) are done: the pack model, the generic core, the sample pack, the generator, the confirmation and patch tools, the CLI, HTTP API and MCP surfaces, and Google Slides output all work against template packs.
-- Phase 8 (clean-up and release) is in progress.
+- Phase 8 (clean-up and release) is done. v0.1.0 is released.
+- Google Slides output is experimental: not tested against a live Google account.
 
 ## 1. Open source, multi-template tool
 

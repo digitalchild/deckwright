@@ -221,9 +221,9 @@ Tools:
 
 Resources: `deckwright://templates`, `deckwright://templates/{template}/layouts`, `deckwright://templates/{template}/brand`. The server instructions tell the agent the recommended workflow for both building a deck and adding a template.
 
-## Google Slides output
+## Google Slides output (experimental)
 
-Deckwright can also upload the built deck to Google Drive as Google Slides.
+Deckwright can also upload the built deck to Google Drive as Google Slides. This feature is experimental. It has not been tested against a live Google account yet.
 
 First, install the extra:
 
