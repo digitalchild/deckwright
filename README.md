@@ -291,7 +291,7 @@ Helper scripts:
 | `scripts/compare_packs.py <reference pack.json> <pptx> [-v]` | Compares a freshly generated pack against a hand-made reference, layout by layout |
 | `scripts/build_thumbnails.py --template <id>` | Renders thumbnails and a layout gallery doc for one pack (needs LibreOffice and poppler) |
 
-See [docs/packs.md](docs/packs.md) for how a pack is generated and reviewed, [docs/kinds.md](docs/kinds.md) for the kind contract, and [docs/adr/](docs/adr/) for the design decisions behind the engine and the pack format.
+See [docs/integration.md](docs/integration.md) to use Deckwright from other tools (library, HTTP API, CLI, MCP), [docs/packs.md](docs/packs.md) for how a pack is generated and reviewed, [docs/kinds.md](docs/kinds.md) for the kind contract, and [docs/adr/](docs/adr/) for the design decisions behind the engine and the pack format.
 
 ## License
 
