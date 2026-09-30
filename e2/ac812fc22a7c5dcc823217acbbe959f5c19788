@@ -1,0 +1,13 @@
+README.md
+  ai_agent 224,226
+docs/TODO.md
+  ai_agent 8-9
+docs/plan-open-source.md
+  ai_agent 3,172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e2ac812fc22a7c5dcc823217acbbe959f5c19788",
+  "prompts": {}
+}
