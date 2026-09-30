@@ -1,0 +1,21 @@
+docs/integration.md
+  s_556000d0d4c2c9::t_a24918aacbc03c 1-174
+README.md
+  s_556000d0d4c2c9::t_5cd17ebe29c309 294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9740dbde6a8ad92209531f30c597519c8de37098",
+  "prompts": {},
+  "sessions": {
+    "s_556000d0d4c2c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c54960ac-2770-4325-af33-961457546dc7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jamie Madden <digitalchild@gmail.com>"
+    }
+  }
+}
