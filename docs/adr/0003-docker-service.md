@@ -30,6 +30,7 @@ See [docs/plan-docker.md](../plan-docker.md) for the full plan this ADR implemen
 ## Consequences
 
 - The Google ID token's signature is not checked in code. The token comes straight from Google's own token endpoint, over TLS, so this follows OpenID Connect Core 3.1.3.7, which allows TLS server validation in place of a signature check when the token is fetched directly from the issuer. Every other claim is still checked in full: issuer, audience, expiry, `email_verified`, and `hd` against the allowed domains.
+- Registration is open to anyone, so the domain check alone is not enough: an outsider could register an app and send a colleague a sign-in link. Deckwright therefore shows a consent page after Google sign-in that names the app and its redirect host, and issues a code only after the person selects Allow. The answer is bound to the browser by a cookie and remembered per person and app.
 - This is a one-instance design. Rate limits are kept in process, and token storage is SQLite. Running more than one replica behind a load balancer is out of scope; it would need a shared rate limiter and a shared database.
 - Template changes need `docker exec` access to the container. This is a deliberate limit, not a gap: it keeps template content under engineering's control, separate from who can build decks.
 - Losing the `/data` volume loses auth state (everyone is signed out, registered API clients are gone) and any template pack that cannot be regenerated from its source `.pptx`. See the backup guidance in [README.md](../../README.md#run-with-docker).

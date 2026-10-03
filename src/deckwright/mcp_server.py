@@ -185,7 +185,7 @@ def review_template(template: str, rebuild: bool = True) -> dict[str, Any]:
 def get_layout_thumbnails(template: str, layout_ids: list[str]) -> list[Image]:
     """Thumbnails of up to 12 layouts, each filled with its example (from the last review)."""
     t = _t(template)
-    paths = [t.thumbnails / f"{lid}.png" for lid in layout_ids[:12]]
+    paths = [t.thumbnails / f"{lid}.png" for lid in layout_ids[:12] if lid in t.by_id]
     return [Image(path=p) for p in paths if p.exists()]
 
 

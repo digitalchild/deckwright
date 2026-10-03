@@ -140,7 +140,12 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "serve":
         from . import config
 
-        if config.load().remote:  # never serve the API remotely without the auth that `server` adds
+        try:
+            remote = config.load().remote
+        except config.ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if remote:  # never serve the API remotely without the auth that `server` adds
             print("DECKWRIGHT_PUBLIC_URL is set: starting the full server with auth", file=sys.stderr)
             return _server(args.host, args.port)
         _check_local_bind(args.host)
@@ -185,8 +190,8 @@ def _clients(args) -> int:
     from . import config
     from .auth import Provider
 
-    settings = config.load()
     try:
+        settings = config.load()
         settings.check()
         if not settings.auth:
             raise config.ConfigError("auth is off: set the DECKWRIGHT_GOOGLE_* variables first")

@@ -147,6 +147,7 @@ Every phase meets these rules before it is done.
 
 Auth and tokens:
 - OAuth 2.1 rules: PKCE (S256) required, exact redirect URI match, short-lived single-use authorization codes (10 minutes), refresh token rotation with reuse detection.
+- Consent per app: registration is open, so after Google sign-in Deckwright shows a consent page that names the app and its redirect host. A code is issued only after the person selects Allow. The answer is bound to the browser with a `SameSite=Strict` cookie and remembered per person and app. This closes the confused-deputy issue that the MCP security best practices describe for proxies with dynamic client registration.
 - Opaque random tokens (`secrets.token_urlsafe(32)`). Stored as SHA-256 hashes. Compared with `hmac.compare_digest`.
 - Tokens bound to the resource (`validate_token_resource=True`), so a token for another server is refused.
 - Google ID token checks: signature, `iss`, `aud`, `exp`, `email_verified`, and `hd` in the allowed domains.

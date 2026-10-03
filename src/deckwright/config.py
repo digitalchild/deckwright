@@ -24,7 +24,10 @@ def _env(name: str) -> str | None:
     value = os.environ.get(name)
     path = os.environ.get(f"{name}_FILE")
     if path:
-        value = Path(path).read_text().strip()
+        try:
+            value = Path(path).read_text().strip()
+        except OSError as exc:
+            raise ConfigError(f"cannot read {name}_FILE ({path}): {exc.strerror}") from exc
     return value or None
 
 
@@ -44,6 +47,13 @@ def _list(name: str) -> list[str]:
     return [p.strip() for p in (os.environ.get(name) or "").split(",") if p.strip()]
 
 
+def _default_data_dir() -> Path:
+    """/data in the Docker image, else the user's data folder."""
+    if Path("/data").is_dir():
+        return Path("/data")
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "deckwright"
+
+
 @dataclass(frozen=True)
 class Settings:
     public_url: str | None = None
@@ -60,7 +70,7 @@ class Settings:
     allow_local_files: bool = False
     allow_slides: bool = False
     trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
-    data_dir: Path = field(default_factory=lambda: Path("/data"))
+    data_dir: Path = field(default_factory=_default_data_dir)
 
     @property
     def remote(self) -> bool:
@@ -93,6 +103,9 @@ class Settings:
         if not self.secret_key or len(self.secret_key) < 32:
             raise ConfigError("remote mode needs DECKWRIGHT_SECRET_KEY, at least 32 characters")
         if self.auth:
+            if not os.access(self.data_dir, os.W_OK) and not (not self.data_dir.exists()
+                                                             and os.access(self.data_dir.parent, os.W_OK)):
+                raise ConfigError(f"auth needs a writable data folder; {self.data_dir} is not (set DECKWRIGHT_DATA_DIR)")
             if not self.google_client_secret:
                 raise ConfigError("auth needs DECKWRIGHT_GOOGLE_CLIENT_SECRET")
             if not self.allowed_domains:
@@ -128,5 +141,5 @@ def load() -> Settings:
         allow_local_files=_flag("DECKWRIGHT_ALLOW_LOCAL_FILES"),
         allow_slides=_flag("DECKWRIGHT_ALLOW_SLIDES"),
         trusted_proxies=proxies,
-        data_dir=Path(os.environ.get("DECKWRIGHT_DATA_DIR", "/data")),
+        data_dir=Path(os.environ.get("DECKWRIGHT_DATA_DIR") or _default_data_dir()).expanduser(),
     )

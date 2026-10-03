@@ -251,3 +251,35 @@ def test_cli_serve_refuses_insecure_bind_without_remote_or_insecure_flag(monkeyp
     monkeypatch.delenv("DECKWRIGHT_INSECURE_NO_AUTH", raising=False)
     with pytest.raises(SystemExit):
         cli.main(["serve", "--host", "0.0.0.0"])
+
+
+def test_streamed_body_over_limit_is_refused(output_dir, tmp_path):
+    app, _ = _build(
+        tmp_path, google_client_id=None, google_client_secret=None, allowed_domains=(), insecure_no_auth=True,
+        max_body_bytes=1000,
+    )
+
+    def chunks():  # no Content-Length: the body arrives in chunks
+        yield b'{"slides": [{"layout": "title", "title": "'
+        for _ in range(10):
+            yield b"x" * 500
+        yield b'"}]}'
+
+    with TestClient(app, base_url="https://decks.example.com") as c:
+        resp = c.post("/v1/plan", content=chunks(), headers={"content-type": "application/json"})
+        assert resp.status_code == 413
+
+
+def test_rate_limit_counts_per_client_not_per_path():
+    from starlette.applications import Starlette
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+
+    from deckwright.security import RateLimiter, RateLimitMiddleware
+
+    inner = Starlette(routes=[Route("/files/{t}", lambda r: PlainTextResponse("ok"))])
+    app = RateLimitMiddleware(inner, ("/files/",), RateLimiter(2, 60))
+    with TestClient(app) as c:
+        assert c.get("/files/a").status_code == 200
+        assert c.get("/files/b").status_code == 200
+        assert c.get("/files/c").status_code == 429

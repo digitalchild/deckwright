@@ -26,6 +26,8 @@ Claude asks you to sign in. Use your work Google account.
 
 Sign in only with the Google account for your company. An account from another company is refused.
 
+The first time, Deckwright asks "Allow Claude to use Deckwright?". The page shows the app name and where you go next. Select **Allow** only if you just started the connection yourself. If you did not, select **Deny**. Deckwright remembers your answer for that app.
+
 ## 4. Ask for a deck
 
 Open a new chat. Name a template and describe your deck. Here are two examples:

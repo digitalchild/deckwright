@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import secrets
 import sqlite3
 import time
@@ -22,6 +23,7 @@ from deckwright import config, server
 from deckwright.auth import GoogleError, Provider, check_id_token
 
 REDIRECT = "https://claude.ai/api/mcp/auth_callback"
+BASE = "https://decks.example.com"
 
 
 @pytest.fixture(autouse=True)
@@ -115,10 +117,20 @@ def _callback(client, google_state, code="gcode"):
     return client.get("/oauth/google/callback", params={"code": code, "state": google_state}, follow_redirects=False)
 
 
+def _approve(client, resp, decision="allow"):
+    """Answer the consent page that the callback shows for an app the person has not approved yet."""
+    assert resp.status_code == 200, resp.text
+    consent_id = re.search(r'name="consent_id" value="([^"]+)"', resp.text).group(1)
+    return client.post("/oauth/consent", data={"consent_id": consent_id, "decision": decision},
+                       follow_redirects=False)
+
+
 def _full_flow(client, client_id, client_secret=None, redirect_uri=REDIRECT) -> dict:
     verifier, challenge = _pkce()
     google_state = _authorize(client, client_id, challenge, redirect_uri=redirect_uri)
     resp = _callback(client, google_state)
+    if resp.status_code == 200:
+        resp = _approve(client, resp)
     code = parse_qs(urlparse(resp.headers["location"]).query)["code"][0]
     data = {
         "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
@@ -223,7 +235,7 @@ def test_reused_authorization_code_is_refused(output_dir, tmp_path, monkeypatch)
         client_id = _register(client)
         verifier, challenge = _pkce()
         google_state = _authorize(client, client_id, challenge)
-        resp = _callback(client, google_state)
+        resp = _approve(client, _callback(client, google_state))
         code = parse_qs(urlparse(resp.headers["location"]).query)["code"][0]
         data = {
             "grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT,
@@ -246,7 +258,7 @@ def test_wrong_code_verifier_is_refused(output_dir, tmp_path, monkeypatch):
         client_id = _register(client)
         _, challenge = _pkce()
         google_state = _authorize(client, client_id, challenge)
-        resp = _callback(client, google_state)
+        resp = _approve(client, _callback(client, google_state))
         code = parse_qs(urlparse(resp.headers["location"]).query)["code"][0]
         resp = client.post(
             "/token",
@@ -268,7 +280,7 @@ def test_wrong_redirect_uri_at_token_is_refused(output_dir, tmp_path, monkeypatc
         client_id = _register(client)
         verifier, challenge = _pkce()
         google_state = _authorize(client, client_id, challenge)
-        resp = _callback(client, google_state)
+        resp = _approve(client, _callback(client, google_state))
         code = parse_qs(urlparse(resp.headers["location"]).query)["code"][0]
         resp = client.post(
             "/token",
@@ -384,3 +396,66 @@ def test_database_holds_no_secrets(output_dir, tmp_path, monkeypatch):
     for secret in (tokens["access_token"], tokens["refresh_token"], admin_tokens["access_token"],
                    admin_tokens["refresh_token"], admin_secret):
         assert secret not in dump
+
+
+# --------------------------------------------------------------------------- consent
+
+
+def _consent_page(client, monkeypatch, name="Claude", redirect=REDIRECT):
+    _patch_google(monkeypatch)
+    resp = client.post("/register", json={"redirect_uris": [redirect], "token_endpoint_auth_method": "none",
+                                          "client_name": name})
+    client_id = resp.json()["client_id"]
+    _, challenge = _pkce()
+    return client_id, _callback(client, _authorize(client, client_id, challenge, redirect_uri=redirect))
+
+
+def test_consent_page_names_the_app_and_destination(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    with TestClient(app, base_url=BASE) as client:
+        _, resp = _consent_page(client, monkeypatch, name="<b>Evil</b>", redirect="https://attacker.example/cb")
+        assert resp.status_code == 200
+        assert "&lt;b&gt;Evil&lt;/b&gt;" in resp.text and "<b>Evil</b>" not in resp.text
+        assert "attacker.example" in resp.text and "person@example.com" in resp.text
+        assert "location" not in resp.headers
+        csp = resp.headers["content-security-policy"]
+        assert "form-action 'self' https://attacker.example" in csp and "frame-ancestors 'none'" in csp
+        cookie = resp.headers["set-cookie"].lower()
+        assert "httponly" in cookie and "samesite=strict" in cookie and "secure" in cookie
+
+
+def test_consent_deny_sends_access_denied_and_no_code(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    with TestClient(app, base_url=BASE) as client:
+        _, resp = _consent_page(client, monkeypatch)
+        resp = _approve(client, resp, decision="deny")
+        query = parse_qs(urlparse(resp.headers["location"]).query)
+        assert query["error"] == ["access_denied"] and "code" not in query
+
+
+def test_consent_without_the_browser_cookie_is_refused(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    with TestClient(app, base_url=BASE) as client:
+        _, resp = _consent_page(client, monkeypatch)
+        client.cookies.clear()
+        assert _approve(client, resp).status_code == 400
+
+
+def test_consent_id_is_single_use(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    with TestClient(app, base_url=BASE) as client:
+        _, page = _consent_page(client, monkeypatch)
+        cookies = dict(client.cookies)
+        assert _approve(client, page).status_code == 302
+        client.cookies.update(cookies)
+        assert _approve(client, page).status_code == 400
+
+
+def test_approved_app_skips_consent_next_time(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    with TestClient(app, base_url=BASE) as client:
+        client_id, page = _consent_page(client, monkeypatch)
+        assert _approve(client, page).status_code == 302
+        _, challenge = _pkce()
+        resp = _callback(client, _authorize(client, client_id, challenge))
+        assert resp.status_code == 302 and "code=" in resp.headers["location"]

@@ -29,7 +29,8 @@ ALLOW_SLIDES = os.environ.get("DECKWRIGHT_ALLOW_SLIDES") == "1"
 
 
 def _check_output(spec: DeckSpec) -> None:
-    if spec.output == "slides" and not ALLOW_SLIDES:
+    """Local API only. A remote server checks its settings in _remote (service.check_spec)."""
+    if app.state.settings is None and spec.output == "slides" and not ALLOW_SLIDES:
         raise HTTPException(403, "Google Slides output is disabled on this server; set DECKWRIGHT_ALLOW_SLIDES=1")
 
 app = FastAPI(
@@ -64,6 +65,11 @@ def need(scope: str) -> Any:
 
 READ = [need("templates:read")]
 DECKS = [need("decks")]
+
+
+def _allow_local(request: Request) -> bool:
+    settings = request.app.state.settings
+    return settings.allow_local_files if settings is not None else ALLOW_LOCAL
 
 
 def _remote(request: Request, spec: DeckSpec) -> None:
@@ -163,7 +169,7 @@ def create(request: Request, spec: DeckSpec, name: str | None = Query(None)) -> 
     _check_output(spec)
     _remote(request, spec)
     try:
-        out = service.create(spec, name, allow_local_files=ALLOW_LOCAL)
+        out = service.create(spec, name, allow_local_files=_allow_local(request))
     except (TemplateError, SelectionError, PackError) as exc:
         raise _bad(exc) from exc
     if request.app.state.settings is not None:
@@ -186,7 +192,7 @@ def create_file(request: Request, spec: DeckSpec) -> Response:
     _check_output(spec)
     _remote(request, spec)
     try:
-        out = service.create(spec, allow_local_files=ALLOW_LOCAL)
+        out = service.create(spec, allow_local_files=_allow_local(request))
     except (TemplateError, SelectionError, PackError) as exc:
         raise _bad(exc) from exc
     if request.app.state.settings is not None:

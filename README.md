@@ -316,7 +316,7 @@ docker exec deckwright deckwright auth client add --name n8n-workflows \
   --scope decks --scope templates:read
 ```
 
-This prints `client_id`, `client_secret` (shown once, store it now), `authorization_url` and `token_url`. The client signs in with the authorization code flow and PKCE (S256), the same as Claude does. Manage clients with:
+This prints `client_id`, `client_secret` (shown once, store it now), `authorization_url` and `token_url`. The client signs in with the authorization code flow and PKCE (S256), the same as Claude does. The first time, the person sees a consent page that names the client and must select Allow. Manage clients with:
 
 ```bash
 docker exec deckwright deckwright auth client list

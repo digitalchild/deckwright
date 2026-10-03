@@ -43,6 +43,8 @@ def verify_file(key: bytes, token: str, now: float | None = None) -> tuple[str, 
         payload, sig = _unb64(p), _unb64(s)
     except ValueError:
         return None
+    if _b64(payload) != p or _b64(sig) != s:  # one spelling per token: refuse non-canonical base64
+        return None
     if not hmac.compare_digest(hmac.new(key, payload, hashlib.sha256).digest(), sig):
         return None
     try:
@@ -100,6 +102,7 @@ class RateLimiter:
         self.limit, self.window = limit, window_s
         self._hits: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
+        self._calls = 0
 
     def allow(self, key: str, now: float | None = None) -> bool:
         now = time.monotonic() if now is None else now
@@ -110,8 +113,9 @@ class RateLimiter:
             if len(hits) >= self.limit:
                 return False
             hits.append(now)
-            if len(self._hits) > 10000:  # drop idle keys so memory stays bounded
-                for k in [k for k, v in self._hits.items() if not v]:
+            self._calls += 1
+            if self._calls % 1000 == 0:  # drop keys idle for a whole window so memory stays bounded
+                for k in [k for k, v in self._hits.items() if not v or v[-1] <= now - self.window]:
                     del self._hits[k]
             return True
 
@@ -134,8 +138,9 @@ class RateLimitMiddleware:
         self.app, self.paths, self.limiter, self.trusted = app, paths, limiter, trusted
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"].startswith(self.paths):
-            if not self.limiter.allow(f"{client_ip(scope, self.trusted)}:{scope['path']}"):
+        prefix = next((p for p in self.paths if scope["type"] == "http" and scope["path"].startswith(p)), None)
+        if prefix is not None:
+            if not self.limiter.allow(f"{client_ip(scope, self.trusted)}:{prefix}"):
                 await _plain(send, 429, "too many requests", [(b"retry-after", str(int(self.limiter.window)).encode())])
                 return
         await self.app(scope, receive, send)
@@ -156,32 +161,27 @@ class BodyLimitMiddleware:
                 await _plain(send, 413, "request body too large")
                 return
         seen = 0
-        started = False
+        refused = False
 
         async def limited() -> Message:
-            nonlocal seen
+            # A streamed body over the limit: answer 413 here, then tell the app the client went away.
+            nonlocal seen, refused
+            if refused:
+                return {"type": "http.disconnect"}
             msg = await receive()
             if msg["type"] == "http.request":
                 seen += len(msg.get("body", b""))
                 if seen > self.max:
-                    raise _TooLarge
+                    refused = True
+                    await _plain(send, 413, "request body too large")
+                    return {"type": "http.disconnect"}
             return msg
 
-        async def tracking_send(msg: Message) -> None:
-            nonlocal started
-            if msg["type"] == "http.response.start":
-                started = True
-            await send(msg)
+        async def guarded_send(msg: Message) -> None:
+            if not refused:
+                await send(msg)
 
-        try:
-            await self.app(scope, limited, tracking_send)
-        except _TooLarge:
-            if not started:
-                await _plain(send, 413, "request body too large")
-
-
-class _TooLarge(Exception):
-    pass
+        await self.app(scope, limited, guarded_send)
 
 
 DOCS_PATHS = ("/docs", "/redoc")
@@ -205,6 +205,7 @@ class SecurityHeadersMiddleware:
 
         async def with_headers(msg: Message) -> None:
             if msg["type"] == "http.response.start":
+                own_csp = next((v for k, v in msg.get("headers", []) if k.lower() == b"content-security-policy"), None)
                 headers = [(k, v) for k, v in msg.get("headers", []) if k.lower() not in _OWNED]
                 headers += [
                     (b"x-content-type-options", b"nosniff"),
@@ -213,7 +214,7 @@ class SecurityHeadersMiddleware:
                     (b"cross-origin-opener-policy", b"same-origin"),
                     (b"cross-origin-resource-policy", b"same-origin"),
                     (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
-                    (b"content-security-policy", DOCS_CSP if docs else CSP),
+                    (b"content-security-policy", own_csp or (DOCS_CSP if docs else CSP)),
                     (b"cache-control", b"no-store"),
                 ]
                 if self.hsts:

@@ -11,6 +11,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import html
 import json
 import logging
 import secrets
@@ -34,7 +35,7 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from .config import Settings
 from .security import subkey, token_hash
@@ -44,6 +45,9 @@ audit = logging.getLogger("deckwright.audit")
 
 SCOPES = ["decks", "templates:read"]
 CALLBACK_PATH = "/oauth/google/callback"
+CONSENT_PATH = "/oauth/consent"
+CONSENT_COOKIE = "deckwright_consent"
+SCOPE_TEXT = {"decks": "Build decks and download them", "templates:read": "Read templates, layouts and brand guides"}
 GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
@@ -62,6 +66,8 @@ CREATE TABLE IF NOT EXISTS codes (
 CREATE TABLE IF NOT EXISTS tokens (
   hash TEXT PRIMARY KEY, kind TEXT NOT NULL, family TEXT NOT NULL, client_id TEXT NOT NULL, subject TEXT NOT NULL,
   email TEXT NOT NULL, scopes TEXT NOT NULL, expires INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS consents (
+  subject TEXT NOT NULL, client_id TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (subject, client_id));
 CREATE INDEX IF NOT EXISTS tokens_family ON tokens (family);
 CREATE INDEX IF NOT EXISTS tokens_client ON tokens (client_id);
 """
@@ -103,6 +109,9 @@ class Store:
         with self.lock:
             for table in ("pending", "codes", "tokens"):
                 self.db.execute(f"DELETE FROM {table} WHERE expires < ?", (now,))
+            # Self-registered apps that hold no tokens after the longest token lifetime are abandoned.
+            self.db.execute("DELETE FROM clients WHERE kind = 'dcr' AND created < ? AND client_id NOT IN "
+                            "(SELECT client_id FROM tokens)", (now - REFRESH_TTL - 86400,))
 
 
 class Provider:
@@ -203,11 +212,9 @@ class Provider:
         pending = self.store.take("pending", token_hash(state)) if state else None
         if pending is None:
             return JSONResponse({"detail": "sign-in expired or invalid; start again from your client"}, 400)
-        params = AuthorizationParams.model_validate(pending["params"])
 
         def back(**kw: str) -> RedirectResponse:
-            url = construct_redirect_uri(str(params.redirect_uri), state=params.state, **kw)
-            return RedirectResponse(url, 302, headers={"Cache-Control": "no-store"})
+            return self._redirect(pending, **kw)
 
         if request.query_params.get("error") or not request.query_params.get("code"):
             audit.info("sign_in result=denied client_id=%s", pending["client_id"])
@@ -217,16 +224,77 @@ class Provider:
         except GoogleError as exc:
             audit.info("sign_in result=refused client_id=%s reason=%s", pending["client_id"], exc)
             return back(error="access_denied", error_description="this account is not allowed")
-        code = secrets.token_urlsafe(32)
         record = {"client_id": pending["client_id"], "scopes": pending["scopes"], "subject": claims["sub"],
-                  "email": claims["email"], "code_challenge": params.code_challenge,
-                  "redirect_uri": str(params.redirect_uri),
-                  "redirect_uri_provided_explicitly": params.redirect_uri_provided_explicitly,
-                  "expires_at": time.time() + CODE_TTL}
-        self.store.run("INSERT INTO codes VALUES (?, ?, ?)",
-                       (token_hash(code), json.dumps(record), int(time.time()) + CODE_TTL))
+                  "email": claims["email"], "params": pending["params"]}
         audit.info("sign_in result=ok client_id=%s email=%s", pending["client_id"], claims["email"])
-        return back(code=code)
+        approved = self.store.run("SELECT 1 FROM consents WHERE subject = ? AND client_id = ?",
+                                  (claims["sub"], pending["client_id"]))
+        if approved:
+            return self._finish(record)
+        return await self._consent_page(record)
+
+    # ------------------------------------------------------------------ consent
+
+    async def _consent_page(self, record: dict[str, Any]) -> Response:
+        """Ask the person once per app. Open registration lets anyone create an app, so a code is never
+        sent to an app the person has not approved by name and destination."""
+        client = await self.get_client(record["client_id"])
+        if client is None:
+            return JSONResponse({"detail": "unknown client"}, 400)
+        consent_id, binding = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        record = {**record, "binding": token_hash(binding)}
+        self.store.run("INSERT INTO pending VALUES (?, ?, ?)",
+                       (token_hash("consent:" + consent_id), json.dumps(record), int(time.time()) + PENDING_TTL))
+        redirect = urllib.parse.urlparse(record["params"]["redirect_uri"])
+        target = f"{redirect.scheme}://{redirect.netloc}"
+        page = CONSENT_HTML.format(
+            client=html.escape(client.client_name or "An unnamed app"), host=html.escape(redirect.netloc),
+            email=html.escape(record["email"]), scopes="".join(f"<li>{html.escape(SCOPE_TEXT[s])}</li>"
+                                                              for s in record["scopes"]),
+            consent_id=html.escape(consent_id), action=CONSENT_PATH)
+        csp = (f"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' {target}; "
+               "frame-ancestors 'none'; base-uri 'none'")
+        response = HTMLResponse(page, headers={"Content-Security-Policy": csp, "Cache-Control": "no-store"})
+        response.set_cookie(CONSENT_COOKIE, binding, max_age=PENDING_TTL, path=CONSENT_PATH, httponly=True,
+                            secure=self.s.public_url.startswith("https://"), samesite="strict")
+        return response
+
+    async def consent(self, request: Request) -> Response:
+        """The consent form posts here. The cookie ties the answer to the browser that saw the page."""
+        form = await request.form()
+        consent_id = str(form.get("consent_id", ""))
+        record = self.store.take("pending", token_hash("consent:" + consent_id)) if consent_id else None
+        binding = request.cookies.get(CONSENT_COOKIE, "")
+        if record is None or not binding or not hmac.compare_digest(record["binding"], token_hash(binding)):
+            return JSONResponse({"detail": "approval expired or invalid; start again from your app"}, 400)
+        if form.get("decision") != "allow":
+            audit.info("consent result=denied client_id=%s email=%s", record["client_id"], record["email"])
+            response = self._redirect(record, error="access_denied", error_description="the request was denied")
+        else:
+            self.store.run("INSERT OR IGNORE INTO consents VALUES (?, ?, ?)",
+                           (record["subject"], record["client_id"], int(time.time())))
+            audit.info("consent result=allowed client_id=%s email=%s", record["client_id"], record["email"])
+            response = self._finish(record)
+        response.delete_cookie(CONSENT_COOKIE, path=CONSENT_PATH)
+        return response
+
+    def _redirect(self, record: dict[str, Any], **kw: str) -> RedirectResponse:
+        params = AuthorizationParams.model_validate(record["params"])
+        url = construct_redirect_uri(str(params.redirect_uri), state=params.state, **kw)
+        return RedirectResponse(url, 302, headers={"Cache-Control": "no-store"})
+
+    def _finish(self, record: dict[str, Any]) -> RedirectResponse:
+        """Issue our authorization code and send the person back to the app."""
+        params = AuthorizationParams.model_validate(record["params"])
+        code = secrets.token_urlsafe(32)
+        data = {"client_id": record["client_id"], "scopes": record["scopes"], "subject": record["subject"],
+                "email": record["email"], "code_challenge": params.code_challenge,
+                "redirect_uri": str(params.redirect_uri),
+                "redirect_uri_provided_explicitly": params.redirect_uri_provided_explicitly,
+                "expires_at": time.time() + CODE_TTL}
+        self.store.run("INSERT INTO codes VALUES (?, ?, ?)",
+                       (token_hash(code), json.dumps(data), int(time.time()) + CODE_TTL))
+        return self._redirect(record, code=code)
 
     def _google_claims(self, code: str, pending: dict[str, Any]) -> dict[str, Any]:
         body = urllib.parse.urlencode({
@@ -307,7 +375,8 @@ class Provider:
         with self.store.lock:
             marked = self.store.db.execute("UPDATE tokens SET used = 1 WHERE hash = ? AND kind = 'refresh' AND used = 0",
                                            (token_hash(refresh_token.token),)).rowcount
-            self.store.db.execute("DELETE FROM tokens WHERE family = ? AND kind = 'access'", (family,))
+            if marked:  # only the request that won the rotation retires the old access tokens
+                self.store.db.execute("DELETE FROM tokens WHERE family = ? AND kind = 'access'", (family,))
         if not marked:
             raise TokenError("invalid_grant", "refresh token already used")
         return self._issue(client.client_id, refresh_token.subject or "", getattr(refresh_token, "email", ""),
@@ -331,6 +400,59 @@ class Provider:
 
     def _revoke_family(self, family: str) -> None:
         self.store.run("DELETE FROM tokens WHERE family = ?", (family,))
+
+
+CONSENT_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Allow access - Deckwright</title>
+<style>
+  :root {{ --bg: #f4f4f5; --card: #fff; --text: #18181b; --muted: #52525b; --line: #e4e4e7;
+          --accent: #2563eb; --accent-text: #fff; }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{ --bg: #18181b; --card: #27272a; --text: #fafafa; --muted: #a1a1aa; --line: #3f3f46; }}
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+         background: var(--bg); color: var(--text);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }}
+  main {{ width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--line);
+         border-radius: 12px; padding: 28px; }}
+  h1 {{ font-size: 20px; line-height: 1.3; margin: 0 0 16px; }}
+  p {{ margin: 0 0 12px; color: var(--muted); }}
+  strong {{ color: var(--text); overflow-wrap: anywhere; }}
+  ul {{ margin: 0 0 20px; padding-left: 20px; }}
+  li {{ margin-bottom: 4px; }}
+  .warn {{ font-size: 14px; border-top: 1px solid var(--line); padding-top: 12px; }}
+  .actions {{ display: flex; gap: 12px; margin-top: 20px; }}
+  button {{ flex: 1; font: inherit; font-weight: 600; padding: 10px 16px; border-radius: 8px; cursor: pointer;
+           border: 1px solid var(--line); background: transparent; color: var(--text); }}
+  button[value=allow] {{ background: var(--accent); border-color: var(--accent); color: var(--accent-text); }}
+  button:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
+</style>
+</head>
+<body>
+<main>
+  <h1>Allow <strong>{client}</strong> to use Deckwright?</h1>
+  <p>You are signed in as <strong>{email}</strong>.</p>
+  <p>This app will be able to:</p>
+  <ul>{scopes}</ul>
+  <p class="warn">After you allow it, you go to <strong>{host}</strong>. Allow only apps you started yourself,
+  such as Claude. If you did not just connect an app, select Deny.</p>
+  <form method="post" action="{action}">
+    <input type="hidden" name="consent_id" value="{consent_id}">
+    <div class="actions">
+      <button type="submit" name="decision" value="deny">Deny</button>
+      <button type="submit" name="decision" value="allow">Allow</button>
+    </div>
+  </form>
+</main>
+</body>
+</html>
+"""
 
 
 class _Code(AuthorizationCode):

@@ -156,3 +156,15 @@ def test_check_allows_remote_without_auth_when_insecure_no_auth():
 def test_check_refuses_auth_without_public_url():
     with pytest.raises(ConfigError):
         Settings(public_url=None, google_client_id="gid").check()
+
+
+def test_verify_file_refuses_non_canonical_base64():
+    key = subkey("s" * 40, "download")
+    token = sign_file(key, "deck-1", "deck-1.pptx", 60)
+    payload, sig = token.split(".")
+    # The last base64 character of a 32-byte signature has unused bits; flipping them keeps the bytes.
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    i = alphabet.index(sig[-1])
+    for other in alphabet[i & ~3:(i & ~3) + 4]:
+        if other != sig[-1]:
+            assert verify_file(key, f"{payload}.{sig[:-1]}{other}") is None

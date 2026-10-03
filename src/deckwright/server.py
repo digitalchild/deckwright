@@ -18,7 +18,7 @@ from starlette.routing import Mount
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import api, config, mcp_server, service
-from .auth import CALLBACK_PATH, Provider
+from .auth import CALLBACK_PATH, CONSENT_PATH, Provider
 from .security import (
     BodyLimitMiddleware,
     RateLimiter,
@@ -30,7 +30,7 @@ from .security import (
 
 log = logging.getLogger("deckwright")
 
-AUTH_PATHS = ("/register", "/authorize", "/token", "/revoke", CALLBACK_PATH)
+AUTH_PATHS = ("/register", "/authorize", "/token", "/revoke", CALLBACK_PATH, CONSENT_PATH)
 API_DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
 MEDIA = {".pptx": api.PPTX_MIME, ".excalidraw": "application/json"}
 
@@ -53,7 +53,7 @@ class _DocsGuard:
         await self.app(scope, receive, send)
 
 
-def build_app(settings: config.Settings, provider: Provider | None = None) -> ASGIApp:
+def build_app(settings: config.Settings, provider: Provider | None = None, host: str = "127.0.0.1") -> ASGIApp:
     """The ASGI app. Pass a provider to reuse one (tests); otherwise one is made when auth is on."""
     if provider is None and settings.auth:
         provider = Provider(settings)
@@ -77,13 +77,19 @@ def build_app(settings: config.Settings, provider: Provider | None = None) -> AS
 
     if provider is not None:
         mcp.custom_route(CALLBACK_PATH, methods=["GET"])(provider.callback)
+        mcp.custom_route(CONSENT_PATH, methods=["POST"])(provider.consent)
 
     transport = None
+    if not settings.remote and host not in ("127.0.0.1", "localhost", "::1"):
+        # Local mode on a wider bind (DECKWRIGHT_INSECURE_NO_AUTH=1 behind the operator's own proxy): the
+        # public host name is unknown here, so Host checks cannot be configured.
+        transport = TransportSecuritySettings(enable_dns_rebinding_protection=False)
     if settings.remote:
         url = urlparse(settings.public_url)
         transport = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=[url.netloc],
                                               allowed_origins=[f"{url.scheme}://{url.netloc}"])
-    app = mcp.streamable_http_app(transport_security=transport, max_request_body_size=settings.max_body_bytes)
+    app = mcp.streamable_http_app(transport_security=transport, max_request_body_size=settings.max_body_bytes,
+                                  host=host)
 
     api.app.state.settings = settings if settings.remote else None
     api.app.state.auth = str(build_resource_metadata_url(settings.mcp_url)) if provider is not None else None
@@ -138,5 +144,5 @@ def run(host: str = "127.0.0.1", port: int = 8765) -> None:
     if settings.remote:
         _sweeper(settings, provider)
     log.info("deckwright server: remote=%s auth=%s", settings.remote, provider is not None)
-    uvicorn.run(build_app(settings, provider), host=host, port=port, server_header=False, proxy_headers=False,
+    uvicorn.run(build_app(settings, provider, host), host=host, port=port, server_header=False, proxy_headers=False,
                 log_level="info")
