@@ -577,3 +577,23 @@ def test_unused_registrations_are_capped(output_dir, tmp_path, monkeypatch):
         codes = [client.post("/register", json={"redirect_uris": [REDIRECT], "token_endpoint_auth_method": "none"}
                              ).status_code for _ in range(3)]
     assert codes == [201, 201, 400]
+
+
+def test_consent_is_per_redirect_uri(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    _patch_google(monkeypatch)
+    other = "https://evil.example/cb"
+    with TestClient(app, base_url=BASE) as client:
+        client_id = _register(client, redirect_uris=(REDIRECT, other))
+        _, challenge = _pkce()
+        assert _approve(client, _callback(client, _authorize(client, client_id, challenge))).status_code == 302
+        resp = _callback(client, _authorize(client, client_id, challenge, redirect_uri=other))
+        assert resp.status_code == 200 and "evil.example" in resp.text  # a new destination asks again
+
+
+def test_consent_page_handles_ipv6_loopback(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    with TestClient(app, base_url=BASE) as client:
+        _, resp = _consent_page(client, monkeypatch, redirect="http://[::1]:7777/cb")
+        assert "form-action 'self' http://[::1]:7777" in resp.headers["content-security-policy"]
+        assert "[::1]:7777" in resp.text

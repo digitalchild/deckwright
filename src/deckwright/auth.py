@@ -68,8 +68,8 @@ CREATE TABLE IF NOT EXISTS tokens (
   hash TEXT PRIMARY KEY, kind TEXT NOT NULL, family TEXT NOT NULL, client_id TEXT NOT NULL, subject TEXT NOT NULL,
   email TEXT NOT NULL, scopes TEXT NOT NULL, expires INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS consents (
-  subject TEXT NOT NULL, client_id TEXT NOT NULL, created INTEGER NOT NULL, scopes TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (subject, client_id));
+  subject TEXT NOT NULL, client_id TEXT NOT NULL, redirect_uri TEXT NOT NULL, created INTEGER NOT NULL,
+  scopes TEXT NOT NULL, PRIMARY KEY (subject, client_id, redirect_uri));
 CREATE INDEX IF NOT EXISTS tokens_family ON tokens (family);
 CREATE INDEX IF NOT EXISTS tokens_client ON tokens (client_id);
 """
@@ -88,9 +88,11 @@ class Store:
             os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
+        consent_cols = {row[1] for row in self.db.execute("PRAGMA table_info(consents)")}
+        if consent_cols and "redirect_uri" not in consent_cols:
+            self.db.execute("DROP TABLE consents")  # pre-release layout: people are simply asked again
         self.db.executescript(SCHEMA)
-        for table, column, decl in (("clients", "used", "INTEGER NOT NULL DEFAULT 0"), ("codes", "family", "TEXT"),
-                                    ("consents", "scopes", "TEXT NOT NULL DEFAULT ''")):
+        for table, column, decl in (("clients", "used", "INTEGER NOT NULL DEFAULT 0"), ("codes", "family", "TEXT")):
             if column not in {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
         self.lock = threading.Lock()
@@ -233,8 +235,8 @@ class Provider:
         record = {"client_id": pending["client_id"], "scopes": pending["scopes"], "subject": claims["sub"],
                   "email": claims["email"], "params": pending["params"]}
         audit.info("sign_in result=ok client_id=%s email=%s", pending["client_id"], claims["email"])
-        rows = self.store.run("SELECT scopes FROM consents WHERE subject = ? AND client_id = ?",
-                              (claims["sub"], pending["client_id"]))
+        rows = self.store.run("SELECT scopes FROM consents WHERE subject = ? AND client_id = ? AND redirect_uri = ?",
+                              (claims["sub"], pending["client_id"], pending["params"]["redirect_uri"]))
         if rows and set(pending["scopes"]) <= set(rows[0][0].split()):  # ask again for any wider access
             return self._finish(record)
         return await self._consent_page(record)
@@ -242,8 +244,8 @@ class Provider:
     # ------------------------------------------------------------------ consent
 
     async def _consent_page(self, record: dict[str, Any]) -> Response:
-        """Ask the person once per app. Open registration lets anyone create an app, so a code is never
-        sent to an app the person has not approved by name and destination."""
+        """Ask the person once per app and destination. Open registration lets anyone create an app, so a
+        code is never sent to an app the person has not approved by name and destination."""
         client = await self.get_client(record["client_id"])
         if client is None:
             return JSONResponse({"detail": "unknown client"}, 400)
@@ -252,7 +254,8 @@ class Provider:
         self.store.run("INSERT INTO pending VALUES (?, ?, ?)",
                        (token_hash("consent:" + consent_id), json.dumps(record), int(time.time()) + PENDING_TTL))
         redirect = urllib.parse.urlparse(record["params"]["redirect_uri"])
-        host = redirect.hostname + (f":{redirect.port}" if redirect.port else "")
+        name = f"[{redirect.hostname}]" if ":" in (redirect.hostname or "") else redirect.hostname
+        host = name + (f":{redirect.port}" if redirect.port else "")
         target = f"{redirect.scheme}://{host}"
         page = CONSENT_HTML.format(
             client=html.escape(client.client_name or "An unnamed app"), host=html.escape(host),
@@ -279,9 +282,10 @@ class Provider:
             response = self._redirect(record, error="access_denied", error_description="the request was denied")
         else:
             self.store.run(
-                "INSERT INTO consents (subject, client_id, created, scopes) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT (subject, client_id) DO UPDATE SET scopes = excluded.scopes",
-                (record["subject"], record["client_id"], int(time.time()), " ".join(sorted(record["scopes"]))))
+                "INSERT INTO consents (subject, client_id, redirect_uri, created, scopes) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT (subject, client_id, redirect_uri) DO UPDATE SET scopes = excluded.scopes",
+                (record["subject"], record["client_id"], record["params"]["redirect_uri"], int(time.time()),
+                 " ".join(sorted(record["scopes"]))))
             audit.info("consent result=allowed client_id=%s email=%s", record["client_id"], record["email"])
             response = self._finish(record)
         response.delete_cookie(_consent_cookie(consent_id), path=CONSENT_PATH)
