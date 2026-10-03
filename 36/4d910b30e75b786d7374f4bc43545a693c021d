@@ -1,0 +1,85 @@
+.gitignore
+  s_1576e7138db6fb::t_7208719b7be9c7 14-15
+src/deckwright/mcp_server.py
+  s_1576e7138db6fb::t_997747fb81c426 145
+  s_1576e7138db6fb::t_42969384de4301 10,146-148,275-276
+  s_1576e7138db6fb::t_aaeea4cb48384a 6,11,15,47-74,84,90,96,104,110,116,123,129,143-144,151,170,178,184,192,201,215,221,230,235,240,245-263,265-274
+  s_1576e7138db6fb::t_b5871ca8092b2b 264
+docs/TODO.md
+  s_1576e7138db6fb::t_612278ddfaecf9 17
+src/deckwright/security.py
+  s_1576e7138db6fb::t_29fe56d39d55f5 1-33,35-53,55-104,106-229
+  s_1576e7138db6fb::t_8b39e166b316b5 34,54,105
+tests/test_security.py
+  s_1576e7138db6fb::t_2b508955e53a08 94-95
+  s_1576e7138db6fb::t_ebd5290cd9d77a 81-83
+  s_1576e7138db6fb::t_96104303a17681 1-80,84-93,96-158
+.github/workflows/ci.yml
+  s_1576e7138db6fb::t_6b0fcfb46cff36 1-33
+docs/plan-docker.md
+  s_1576e7138db6fb::t_9b59219fec57a3 3
+  s_1576e7138db6fb::t_1b555430590023 136
+docs/adr/0003-docker-service.md
+  s_1576e7138db6fb::t_42b28725722393 1-36
+src/deckwright/service.py
+  s_1576e7138db6fb::t_997747fb81c426 11,14,25-27,172-176,184-239
+  s_1576e7138db6fb::t_c9cbf9b2f7ab77 88
+  s_1576e7138db6fb::t_6480470d628e5f 9
+  s_1576e7138db6fb::t_40a83d248fbb2d 6,22
+  s_1576e7138db6fb::t_42969384de4301 177-183
+docs/connect-claude.md
+  s_1576e7138db6fb::t_7449073ad75004 1-49
+docker-compose.yml
+  s_1576e7138db6fb::t_6d3c7a654db262 1-41
+Dockerfile
+  s_1576e7138db6fb::t_07115a0393c216 1-45
+tests/test_server.py
+  s_1576e7138db6fb::t_e6ddbbb0d466ec 1-18,20,22-214,216-253
+  s_1576e7138db6fb::t_11a5784c1b6083 21
+  s_1576e7138db6fb::t_70dfa299dd96bf 19
+  s_1576e7138db6fb::t_365c201ad8bf57 215
+src/deckwright/auth.py
+  s_1576e7138db6fb::t_8b39e166b316b5 371
+  s_1576e7138db6fb::t_f9c37d61c7c1c3 304-306
+  s_1576e7138db6fb::t_f44781c2ac4503 1-303,307-370,372-385
+src/deckwright/config.py
+  s_1576e7138db6fb::t_a74245cff6f1a3 1-132
+.github/workflows/docker.yml
+  s_1576e7138db6fb::t_6b0fcfb46cff36 1-96
+README.md
+  s_1576e7138db6fb::t_eaf7d6d4d294e7 406-420
+  s_1576e7138db6fb::t_a196ad7a6d5036 228-337,340-352
+  s_1576e7138db6fb::t_d12574ddbb02a0 338-339
+  s_1576e7138db6fb::t_da5103967a6758 152,154-156
+src/deckwright/api.py
+  s_1576e7138db6fb::t_1a9da8b454ac3e 13,15,37,42-77,82,90,98,106,117,126,132,141,151-152,154,161-162,164,169,172,179-180,187,203,212,225
+  s_1576e7138db6fb::t_42969384de4301 170-171,192-194
+src/deckwright/server.py
+  s_1576e7138db6fb::t_bcf33f44452c80 1-99,112-133,135-142
+  s_1576e7138db6fb::t_f9c37d61c7c1c3 100-111,134
+tests/test_auth.py
+  s_1576e7138db6fb::t_9b501354c40bbc 1-386
+.dockerignore
+  s_1576e7138db6fb::t_199a2230ab14bf 1-18
+src/deckwright/cli.py
+  s_1576e7138db6fb::t_8de00b24898fca 55-58,68-79,141-146,149-151,158-213,220-221
+  s_1576e7138db6fb::t_42969384de4301 1,153-154,157
+SECURITY.md
+  s_1576e7138db6fb::t_7d3477ec7cb88f 1-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "364d910b30e75b786d7374f4bc43545a693c021d",
+  "prompts": {},
+  "sessions": {
+    "s_1576e7138db6fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0300a77b-371b-4ee2-943c-6a15fb2af254",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jamie Madden <digitalchild@gmail.com>"
+    }
+  }
+}
