@@ -13,19 +13,22 @@ Deckwright stays open source. The Docker image is one more way to serve it, next
 | Topic | Decision |
 |---|---|
 | Packaging | One Docker image. Plain Docker, no platform-specific runtime. |
-| Surface | Remote MCP server over streamable HTTP (`deckwright mcp --http`). |
-| Auth | OAuth built into Deckwright. Off by default. On when the Google env vars are set. |
+| Surface | One server process on one port. The remote MCP server (streamable HTTP) and the HTTP API run together. New command: `deckwright server`. |
+| Auth | OAuth built into Deckwright. It protects the MCP endpoint and every HTTP API route. Off by default for local use. In remote mode, the server refuses to start without auth unless an explicit insecure flag is set. |
+| API clients | Scripts and tools (for example n8n workflows) use standard OAuth too. An admin registers a confidential client with a CLI command. The client then uses the authorization code flow with PKCE. No separate API key system. |
 | Identity | Google sign-in. Access only for accounts whose verified `hd` claim matches an allowed domain. |
 | Storage | One volume at `/data`. Template packs, built decks, previews and auth state live there. |
 | Downloads | `create_presentation` returns a signed, short-lived download URL. The MCP server serves it. |
 | Template admin | Engineering only, through the CLI inside the container. Not exposed to remote users. |
 | Registry | GitHub Container Registry (GHCR), built by GitHub Actions on each release tag. Docker Hub can come later. |
 | New dependencies | None at runtime. The MCP Python SDK (`mcp>=2.2.0`) already has the OAuth server parts. Token storage uses stdlib `sqlite3`. |
-| Out of scope | Multi-instance scaling, per-user template permissions, remote template upload, the HTTP API behind auth. |
+| Security | Secure by default. See [Security baseline](#security-baseline). Every phase meets it before it is done. |
+| Out of scope | Multi-instance scaling, per-user template permissions, remote template upload. |
 
 ## Current state (read from the source)
 
 - `mcp_server.py:209` runs streamable HTTP already. It binds `127.0.0.1` by default and has no auth.
+- `api.py` is a separate FastAPI app (`deckwright serve`). It has no auth. Its deck download, slide preview and thumbnail routes are open to anyone who can reach it. `/docs` and `/openapi.json` are public.
 - `mcp_server.py:113` calls `service.create(..., allow_local_files=True)`. On a remote server this lets any caller read any file in the container into a slide. Remote mode must turn this off.
 - `service.create` returns `"path"`, a container file path. A remote user cannot open it.
 - `add_template` and `update_template` take a `.pptx` path on the server. A remote user cannot supply one.
@@ -46,8 +49,9 @@ deckwright container :8765
    /.well-known/...         OAuth metadata (SDK)
    /register /authorize /token /revoke   OAuth server (SDK handlers)
    /oauth/google/callback   Google sign-in return (custom route)
+   /v1/...                  HTTP API (auth required when enabled)
    /files/{token}           Signed deck and diagram downloads (custom route)
-   /health                  Liveness check (custom route)
+   /health                  Liveness check, no data (custom route)
    |
    v
 /data (volume)
@@ -70,6 +74,24 @@ Deckwright is the OAuth server for Claude. Google is the identity provider behin
 6. The SDK bearer middleware checks the access token on each `/mcp` request.
 
 Google tokens are used once, at sign-in. Deckwright does not keep them.
+
+### HTTP API
+
+- `deckwright server` builds one ASGI app. The MCP app (with the SDK auth routes) comes first. The FastAPI app is mounted after it, so the `/v1/...` paths do not change.
+- A FastAPI dependency on every `/v1` route checks the bearer token with the same provider that `/mcp` uses. A missing or bad token returns 401 with a `WWW-Authenticate: Bearer` header. No route is exempt.
+- Scopes: `decks` (build, plan, download, preview) and `templates:read` (brand, layouts, templates, thumbnails). Claude connectors get both. Registered API clients get only the scopes the admin grants.
+- `/docs`, `/redoc` and `/openapi.json` are off in remote mode. `DECKWRIGHT_API_DOCS=1` turns them on, still behind auth.
+- `deckwright serve` (API only) and `deckwright mcp --http` (MCP only) stay for local use. In remote mode they apply the same auth, so no command can expose an open server by accident.
+
+Register an API client (for example an n8n OAuth2 credential):
+
+```bash
+docker exec deckwright deckwright auth client add --name n8n-workflows --redirect-uri https://n8n.example.com/rest/oauth2-credential/callback --scope decks --scope templates:read
+docker exec deckwright deckwright auth client list
+docker exec deckwright deckwright auth client revoke <client-id>
+```
+
+The command prints the client secret once. Deckwright stores only its hash. The client still signs in as a person from an allowed domain, so every API call maps to a real user.
 
 ### Downloads
 
@@ -112,8 +134,44 @@ Or does the review on a laptop, then copies the pack folder into the volume. Bot
 | `DECKWRIGHT_AUTH_ALLOWED_DOMAINS` | for auth | Comma-separated Google Workspace domains, for example `example.com`. Auth refuses to start without it. |
 | `DECKWRIGHT_DOWNLOAD_TTL` | no | Download link lifetime in seconds. Default `86400`. |
 | `DECKWRIGHT_TEMPLATES`, `DECKWRIGHT_OUTPUT_DIR` | no | Set by the image to `/data/templates` and `/data/output`. |
+| `DECKWRIGHT_API_DOCS` | no | `1` serves the OpenAPI docs in remote mode, behind auth. |
+| `DECKWRIGHT_INSECURE_NO_AUTH` | no | `1` lets remote mode start without auth. For teams that put their own SSO proxy in front. Logs a warning on every start. |
 
-Safety rule: in remote mode with auth off, the server logs a clear warning at start. It does not refuse, so a team can still run it behind its own VPN or SSO proxy.
+Safety rule: in remote mode with auth off, the server refuses to start unless `DECKWRIGHT_INSECURE_NO_AUTH=1`. Secure is the default. Insecure needs an explicit choice.
+
+Secrets can also come from files (`DECKWRIGHT_SECRET_KEY_FILE`, `DECKWRIGHT_GOOGLE_CLIENT_SECRET_FILE`), so Docker secrets work without env vars.
+
+## Security baseline
+
+Every phase meets these rules before it is done.
+
+Auth and tokens:
+- OAuth 2.1 rules: PKCE (S256) required, exact redirect URI match, short-lived single-use authorization codes (10 minutes), refresh token rotation with reuse detection.
+- Opaque random tokens (`secrets.token_urlsafe(32)`). Stored as SHA-256 hashes. Compared with `hmac.compare_digest`.
+- Tokens bound to the resource (`validate_token_resource=True`), so a token for another server is refused.
+- Google ID token checks: signature, `iss`, `aud`, `exp`, `email_verified`, and `hd` in the allowed domains.
+- Revocation for tokens and clients. Revoking a client revokes its tokens.
+
+Transport and HTTP:
+- HTTPS only in remote mode. `DECKWRIGHT_PUBLIC_URL` must start with `https://`, except `http://localhost` for tests.
+- Security headers on every response: `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on auth and API responses, and a strict `Content-Security-Policy` on the few HTML pages.
+- No CORS. Browsers do not call the API cross-origin.
+- Request body limit on deck specs (default 5 MB). Limits on slide count and image fetch size and time.
+- Rate limits on `/register`, `/authorize`, `/token` and the Google callback, per client IP. In-process, no new dependency. Trusted proxy headers only from `DECKWRIGHT_TRUSTED_PROXIES`.
+- Generic error messages to clients. Details go to the server log only.
+
+Data:
+- Signed download links: HMAC-SHA256, expiry inside the signed data, constant-time check, file name pattern check, served with `Content-Disposition: attachment`.
+- Local image paths refused and private network URLs refused in remote mode (SSRF guard, already in `images.py`).
+- Built decks are deleted after `DECKWRIGHT_RETENTION_DAYS` (default 7).
+- Logs never contain tokens, secrets, codes or deck content. An audit line per build and per sign-in: time, user email, client id, action, result.
+
+Container and supply chain:
+- Non-root user. Read-only root filesystem, with `/data` and `/tmp` as the only writable paths. `no-new-privileges` and all Linux capabilities dropped in the compose example.
+- Base image pinned by digest. `uv sync --frozen` from the lockfile.
+- CI: `pip-audit` on dependencies, Trivy scan on the image, build fails on high or critical issues.
+- Published images carry an SBOM and build provenance, and are signed with cosign (keyless, GitHub OIDC).
+- `SECURITY.md` with how to report a vulnerability.
 
 ## Phases
 
@@ -121,7 +179,9 @@ Safety rule: in remote mode with auth off, the server logs a clear warning at st
 
 - `Dockerfile` at the repo root. Base `python:3.12-slim`. Install `libreoffice-impress`, `poppler-utils` and `fontconfig`. Install Deckwright with `uv sync --frozen --no-dev`.
 - Run as a non-root user. Volume `/data`. Expose `8765`.
-- Default command: `deckwright mcp --http --host 0.0.0.0 --port 8765`.
+- New `deckwright server` command: MCP and the HTTP API in one ASGI app on one port.
+- Default command: `deckwright server --host 0.0.0.0 --port 8765`.
+- Non-root, read-only root filesystem, dropped capabilities, base image pinned by digest.
 - Copy the built-in `sample` pack fonts so previews work at first start.
 - Add `/health` with `custom_route`. Add a Docker `HEALTHCHECK`.
 - `docker-compose.yml` example with the volume and env vars, plus a Caddy example for TLS in the docs.
@@ -136,7 +196,9 @@ Done when: `docker compose up` gives a working MCP server, and `create_presentat
 - Pass `allow_local_files` from config in `create_presentation`, not `True`.
 - Register the template admin tools only outside remote mode.
 - Signed download links and the `/files/{token}` route.
-- Tests: link signing and expiry, path traversal refused, local paths refused in remote mode, admin tools absent in remote mode.
+- Security headers, body and slide limits, generic errors, deck retention cleanup.
+- OpenAPI docs off in remote mode.
+- Tests: link signing and expiry, tampered links refused, path traversal refused, local paths refused in remote mode, admin tools absent in remote mode, headers present, oversized bodies refused.
 
 Done when: a deck built over remote MCP downloads from its link in a browser, and the refused cases have tests.
 
@@ -147,13 +209,20 @@ Done when: a deck built over remote MCP downloads from its link in a browser, an
 - Pass `auth_server_provider` and `AuthSettings` (dynamic registration on, revocation on, `resource_server_url` set to `{PUBLIC_URL}/mcp`, `validate_token_resource=True`) to `MCPServer` when auth is on.
 - Hash stored tokens. Access token lifetime 1 hour. Refresh token lifetime 30 days.
 - Verify the Google ID token with Google's public keys. Prefer a stdlib-only check, or the tokeninfo endpoint, over a new dependency. If a library is needed, ask first.
-- Tests with a fake Google endpoint: allowed domain passes, other domain fails, unverified email fails, expired and revoked tokens fail, `/mcp` without a token returns 401.
+- The bearer dependency on every `/v1` route, with scopes.
+- `deckwright auth client add|list|revoke` for API clients.
+- Rate limits on the auth routes. Audit log lines.
+- Refuse to start in remote mode without auth, unless `DECKWRIGHT_INSECURE_NO_AUTH=1`.
+- Tests with a fake Google endpoint: allowed domain passes, other domain fails, unverified email fails, missing PKCE fails, wrong redirect URI fails, reused code fails, reused refresh token revokes the family, expired and revoked tokens fail, missing scope returns 403.
+- A test that walks every registered `/v1` route and `/mcp` and checks each returns 401 without a token. New routes then cannot ship open by mistake.
 
-Done when: a test user adds the connector in Claude, signs in with an allowed account and builds a deck. An account from another domain is refused.
+Done when: a test user adds the connector in Claude, signs in with an allowed account and builds a deck. An account from another domain is refused. A registered API client builds a deck through `/v1/presentations`. Every route returns 401 without a token.
 
 ### Phase 4: Publish and document
 
 - GitHub Actions workflow: on a `v*` tag, build both architectures and push `ghcr.io/<owner>/deckwright:<version>` and `:latest`.
+- In the same workflow: `pip-audit`, Trivy image scan, SBOM, build provenance, cosign signature. Pin every action by commit SHA. Give the workflow token the least permissions it needs.
+- `SECURITY.md`.
 - README section "Run with Docker": `docker run`, compose, env vars, the Google OAuth client setup, TLS, and template admin.
 - A short end-user guide, `docs/connect-claude.md`: add the connector URL, sign in, ask for a deck. No terminal steps.
 - ADR `docs/adr/0003-docker-service.md` for the auth and storage decisions.
@@ -167,7 +236,9 @@ Done when: a fresh machine runs the published image from the README steps alone.
 |---|---|
 | Large image (LibreOffice is about 500 MB) | Install only `libreoffice-impress`. Accept the size; it is pulled once. |
 | One LibreOffice render at a time | Previews are cached per deck. Fine for one team. Note the limit in the docs. |
-| OAuth bugs expose the server | Domain check on the server side, tests for each refusal, auth state in one small module. Review this phase with extra care. |
+| OAuth bugs expose the server | Domain check on the server side, tests for each refusal, auth state in one small module. Run `security-review` on this phase before merge. |
+| A new route ships without auth | The route-walk test fails the build. |
+| Stolen API client secret | Hashed at rest, shown once, revocable. The client still needs a user sign-in from an allowed domain. |
 | Claude connector OAuth details change | Rely on the SDK handlers for the MCP side. Test against Claude desktop and claude.ai before release. |
 | Download links shared outside the team | Links expire. Lifetime is configurable. |
 | Lost volume loses templates | Document a backup of `/data/templates`. Packs can also be rebuilt from their `.pptx` files. |
