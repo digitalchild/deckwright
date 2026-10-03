@@ -168,3 +168,17 @@ def test_verify_file_refuses_non_canonical_base64():
     for other in alphabet[i & ~3:(i & ~3) + 4]:
         if other != sig[-1]:
             assert verify_file(key, f"{payload}.{sig[:-1]}{other}") is None
+
+
+def test_check_accepts_a_data_dir_whose_parents_do_not_exist_yet(tmp_path):
+    _settings(public_url="http://localhost", data_dir=tmp_path / "a" / "b" / "c").check()
+
+
+def test_check_refuses_an_unwritable_data_dir(tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o500)
+    try:
+        with pytest.raises(ConfigError):
+            _settings(public_url="http://localhost", data_dir=locked / "data").check()
+    finally:
+        locked.chmod(0o700)

@@ -17,9 +17,13 @@ COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
 FROM python:3.13-slim-trixie@sha256:bb2988715db2cf7ace7b53f38f3cffbef7c7046a656bee66245eb0ed386e2e81
+# Security updates on top of the pinned base, then the runtime packages. pip is removed: the app runs
+# from its own virtualenv and never installs anything at runtime.
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends libreoffice-impress poppler-utils fontconfig \
  && rm -rf /var/lib/apt/lists/* \
+ && python -m pip uninstall -y pip \
  && groupadd --system --gid 10001 deckwright \
  && useradd --system --uid 10001 --gid deckwright --home-dir /tmp --shell /usr/sbin/nologin deckwright \
  && mkdir -p /data \

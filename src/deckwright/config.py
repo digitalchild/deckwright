@@ -47,6 +47,15 @@ def _list(name: str) -> list[str]:
     return [p.strip() for p in (os.environ.get(name) or "").split(",") if p.strip()]
 
 
+def _writable(path: Path) -> bool:
+    """True when path is a writable folder, or can be created under its nearest existing parent."""
+    while not path.exists():
+        if path.parent == path:
+            return False
+        path = path.parent
+    return path.is_dir() and os.access(path, os.W_OK)
+
+
 def _default_data_dir() -> Path:
     """/data in the Docker image, else the user's data folder."""
     if Path("/data").is_dir():
@@ -103,8 +112,7 @@ class Settings:
         if not self.secret_key or len(self.secret_key) < 32:
             raise ConfigError("remote mode needs DECKWRIGHT_SECRET_KEY, at least 32 characters")
         if self.auth:
-            if not os.access(self.data_dir, os.W_OK) and not (not self.data_dir.exists()
-                                                             and os.access(self.data_dir.parent, os.W_OK)):
+            if not _writable(self.data_dir):
                 raise ConfigError(f"auth needs a writable data folder; {self.data_dir} is not (set DECKWRIGHT_DATA_DIR)")
             if not self.google_client_secret:
                 raise ConfigError("auth needs DECKWRIGHT_GOOGLE_CLIENT_SECRET")
