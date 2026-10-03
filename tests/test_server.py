@@ -338,6 +338,20 @@ def test_two_apps_in_one_process_keep_their_own_settings(output_dir, tmp_path):
 
     remote, _ = _build(tmp_path)
     local = server.build_app(config.Settings(data_dir=tmp_path / "local"))
-    with TestClient(remote, base_url="https://decks.example.com") as r, TestClient(local) as lo:
+    with TestClient(remote, base_url="https://decks.example.com") as r, TestClient(local, base_url="http://localhost") as lo:
         assert lo.get("/v1/templates").status_code == 200
         assert r.get("/v1/templates").status_code == 401  # building the local app did not turn auth off
+
+
+def test_unknown_host_is_refused_against_dns_rebinding(output_dir, tmp_path):
+    from deckwright import config, server
+
+    local = server.build_app(config.Settings(data_dir=tmp_path))
+    with TestClient(local, base_url="http://127.0.0.1:8765") as c:
+        assert c.get("/v1/templates").status_code == 200
+        assert c.get("/v1/templates", headers={"host": "attacker.example"}).status_code == 421
+    remote, _ = _build(tmp_path)
+    with TestClient(remote, base_url="https://decks.example.com") as c:
+        assert c.get("/health").status_code == 200
+        assert c.get("/health", headers={"host": "127.0.0.1:8765"}).status_code == 200  # container health check
+        assert c.get("/health", headers={"host": "attacker.example"}).status_code == 421

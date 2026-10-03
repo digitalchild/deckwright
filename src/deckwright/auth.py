@@ -362,7 +362,7 @@ class Provider:
                            family=family)
 
     def _issue(self, client_id: str, subject: str, email: str, scopes: list[str], family: str,
-               refresh_expires: int | None = None) -> OAuthToken:
+               refresh_expires: int | None = None, refresh_scopes: list[str] | None = None) -> OAuthToken:
         """New tokens. A rotated refresh token keeps its family's expiry, so a session ends REFRESH_TTL after
         the Google sign-in and the account and domain are checked again at least that often."""
         access, refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
@@ -371,12 +371,13 @@ class Provider:
         access_expires = min(now + ACCESS_TTL, refresh_expires)
         with self.store.lock:
             self.store.db.execute("UPDATE clients SET used = 1 WHERE client_id = ? AND used = 0", (client_id,))
-            for tok, kind, expires in ((access, "access", access_expires),
-                                       (refresh, "refresh", refresh_expires)):
+            # The refresh token keeps the whole grant; a narrower refresh request narrows only the access token.
+            for tok, kind, expires, granted in ((access, "access", access_expires, scopes),
+                                                (refresh, "refresh", refresh_expires, refresh_scopes or scopes)):
                 self.store.db.execute(
                     "INSERT INTO tokens (hash, kind, family, client_id, subject, email, scopes, expires) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (token_hash(tok), kind, family, client_id, subject, email, " ".join(scopes), expires))
+                    (token_hash(tok), kind, family, client_id, subject, email, " ".join(granted), expires))
         return OAuthToken(access_token=access, token_type="Bearer", expires_in=access_expires - now, refresh_token=refresh,
                           scope=" ".join(scopes))
 
@@ -413,7 +414,8 @@ class Provider:
         if not marked:
             raise TokenError("invalid_grant", "refresh token already used")
         return self._issue(client.client_id, refresh_token.subject or "", getattr(refresh_token, "email", ""),
-                           granted, family, refresh_expires=refresh_token.expires_at)
+                           granted, family, refresh_expires=refresh_token.expires_at,
+                           refresh_scopes=refresh_token.scopes)
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         row = self._token_row(token, "access")

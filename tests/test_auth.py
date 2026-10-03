@@ -597,3 +597,17 @@ def test_consent_page_handles_ipv6_loopback(output_dir, tmp_path, monkeypatch):
         _, resp = _consent_page(client, monkeypatch, redirect="http://[::1]:7777/cb")
         assert "form-action 'self' http://[::1]:7777" in resp.headers["content-security-policy"]
         assert "[::1]:7777" in resp.text
+
+
+def test_narrower_refresh_keeps_the_full_grant_for_later(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    _patch_google(monkeypatch)
+    with TestClient(app, base_url=BASE) as client:
+        client_id = _register(client)
+        tokens = _full_flow(client, client_id)
+        narrow = client.post("/token", data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"],
+                                             "client_id": client_id, "scope": "templates:read"}).json()
+        assert narrow["scope"] == "templates:read"
+        full = client.post("/token", data={"grant_type": "refresh_token", "refresh_token": narrow["refresh_token"],
+                                           "client_id": client_id}).json()
+        assert set(full["scope"].split()) == {"decks", "templates:read"}

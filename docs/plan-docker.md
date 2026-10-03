@@ -162,6 +162,7 @@ Transport and HTTP:
 - HTTPS only in remote mode. `DECKWRIGHT_PUBLIC_URL` must start with `https://`, except `http://localhost` for tests.
 - Security headers on every response: `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on auth and API responses, and a strict `Content-Security-Policy` on the few HTML pages.
 - No CORS. Browsers do not call the API cross-origin.
+- Host header check on every route, against DNS rebinding: local mode accepts only loopback names; remote mode accepts the public host and loopback (for the container health check).
 - Request body limit on deck specs (default 5 MB). Limits on slide count and image fetch size and time.
 - Rate limits on `/register`, `/authorize`, `/token` and the Google callback, per client IP. In-process, no new dependency. Trusted proxy headers only from `DECKWRIGHT_TRUSTED_PROXIES`.
 - Generic error messages to clients. Details go to the server log only.

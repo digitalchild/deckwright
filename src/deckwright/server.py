@@ -20,6 +20,7 @@ from . import api, config, mcp_server, service
 from .auth import CALLBACK_PATH, CONSENT_PATH, Provider
 from .security import (
     BodyLimitMiddleware,
+    HostCheckMiddleware,
     RateLimiter,
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
@@ -100,6 +101,11 @@ def build_app(settings: config.Settings, provider: Provider | None = None, host:
     # so the limit allows a busy rollout; the cap on registrations that never sign in bounds the database.
     wrapped = RateLimitMiddleware(wrapped, ("/register",), RateLimiter(600, 3600), settings.trusted_proxies)
     wrapped = BodyLimitMiddleware(wrapped, settings.max_body_bytes)
+    # Loopback names stay allowed in remote mode so the container health check works.
+    hosts = ["localhost", "127.0.0.1", "[::1]"]
+    if settings.remote:
+        hosts.append(urlparse(settings.public_url).netloc)
+    wrapped = HostCheckMiddleware(wrapped, hosts)
     return SecurityHeadersMiddleware(wrapped, hsts=(settings.public_url or "").startswith("https://"))
 
 

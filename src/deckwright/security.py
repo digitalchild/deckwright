@@ -146,6 +146,23 @@ class RateLimitMiddleware:
         await self.app(scope, receive, send)
 
 
+class HostCheckMiddleware:
+    """Refuse requests whose Host header is not one of ours. This stops DNS rebinding: a web page that
+    points its own domain at this server cannot call the API from a person's browser."""
+
+    def __init__(self, app: ASGIApp, hosts: Iterable[str]):
+        self.app, self.hosts = app, {h.lower() for h in hosts}
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            host = next((v.decode("latin-1").lower() for k, v in scope.get("headers", []) if k == b"host"), "")
+            name = host.rsplit(":", 1)[0] if not host.endswith("]") else host
+            if host not in self.hosts and name not in self.hosts:
+                await _plain(send, 421, "unknown host")
+                return
+        await self.app(scope, receive, send)
+
+
 class BodyLimitMiddleware:
     """Refuse request bodies over max_bytes, by Content-Length and while streaming."""
 
