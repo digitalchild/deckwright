@@ -62,12 +62,13 @@ CREATE TABLE IF NOT EXISTS clients (
 CREATE TABLE IF NOT EXISTS pending (
   state TEXT PRIMARY KEY, data TEXT NOT NULL, expires INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS codes (
-  code TEXT PRIMARY KEY, data TEXT NOT NULL, expires INTEGER NOT NULL);
+  code TEXT PRIMARY KEY, data TEXT NOT NULL, expires INTEGER NOT NULL, family TEXT);
 CREATE TABLE IF NOT EXISTS tokens (
   hash TEXT PRIMARY KEY, kind TEXT NOT NULL, family TEXT NOT NULL, client_id TEXT NOT NULL, subject TEXT NOT NULL,
   email TEXT NOT NULL, scopes TEXT NOT NULL, expires INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS consents (
-  subject TEXT NOT NULL, client_id TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (subject, client_id));
+  subject TEXT NOT NULL, client_id TEXT NOT NULL, created INTEGER NOT NULL, scopes TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (subject, client_id));
 CREATE INDEX IF NOT EXISTS tokens_family ON tokens (family);
 CREATE INDEX IF NOT EXISTS tokens_client ON tokens (client_id);
 """
@@ -87,19 +88,20 @@ class Store:
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
-        if "used" not in {row[1] for row in self.db.execute("PRAGMA table_info(clients)")}:
-            self.db.execute("ALTER TABLE clients ADD COLUMN used INTEGER NOT NULL DEFAULT 0")
+        for table, column, decl in (("clients", "used", "INTEGER NOT NULL DEFAULT 0"), ("codes", "family", "TEXT"),
+                                    ("consents", "scopes", "TEXT NOT NULL DEFAULT ''")):
+            if column not in {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
         self.lock = threading.Lock()
 
     def run(self, sql: str, args: tuple = ()) -> list[tuple]:
         with self.lock:
             return self.db.execute(sql, args).fetchall()
 
-    def take(self, table: str, key: str) -> dict[str, Any] | None:
-        """Read and delete one row of a single-use table (pending, codes)."""
+    def take(self, key: str) -> dict[str, Any] | None:
+        """Read and delete one single-use pending row (a Google sign-in or a consent page)."""
         with self.lock:
-            row = self.db.execute(f"DELETE FROM {table} WHERE {'state' if table == 'pending' else 'code'} = ? "
-                                  "RETURNING data, expires", (key,)).fetchone()
+            row = self.db.execute("DELETE FROM pending WHERE state = ? RETURNING data, expires", (key,)).fetchone()
         if row is None or row[1] < time.time():
             return None
         return json.loads(row[0])
@@ -209,7 +211,7 @@ class Provider:
     async def callback(self, request: Request) -> Response:
         """Google returns here. Check the account, then send the user back to the client with our own code."""
         state = request.query_params.get("state", "")
-        pending = self.store.take("pending", token_hash(state)) if state else None
+        pending = self.store.take(token_hash(state)) if state else None
         if pending is None:
             return JSONResponse({"detail": "sign-in expired or invalid; start again from your client"}, 400)
 
@@ -227,9 +229,9 @@ class Provider:
         record = {"client_id": pending["client_id"], "scopes": pending["scopes"], "subject": claims["sub"],
                   "email": claims["email"], "params": pending["params"]}
         audit.info("sign_in result=ok client_id=%s email=%s", pending["client_id"], claims["email"])
-        approved = self.store.run("SELECT 1 FROM consents WHERE subject = ? AND client_id = ?",
-                                  (claims["sub"], pending["client_id"]))
-        if approved:
+        rows = self.store.run("SELECT scopes FROM consents WHERE subject = ? AND client_id = ?",
+                              (claims["sub"], pending["client_id"]))
+        if rows and set(pending["scopes"]) <= set(rows[0][0].split()):  # ask again for any wider access
             return self._finish(record)
         return await self._consent_page(record)
 
@@ -263,7 +265,7 @@ class Provider:
         """The consent form posts here. The cookie ties the answer to the browser that saw the page."""
         form = await request.form()
         consent_id = str(form.get("consent_id", ""))
-        record = self.store.take("pending", token_hash("consent:" + consent_id)) if consent_id else None
+        record = self.store.take(token_hash("consent:" + consent_id)) if consent_id else None
         binding = request.cookies.get(_consent_cookie(consent_id), "") if consent_id else ""
         if record is None or not binding or not hmac.compare_digest(record["binding"], token_hash(binding)):
             return JSONResponse({"detail": "approval expired or invalid; start again from your app"}, 400)
@@ -271,8 +273,10 @@ class Provider:
             audit.info("consent result=denied client_id=%s email=%s", record["client_id"], record["email"])
             response = self._redirect(record, error="access_denied", error_description="the request was denied")
         else:
-            self.store.run("INSERT OR IGNORE INTO consents VALUES (?, ?, ?)",
-                           (record["subject"], record["client_id"], int(time.time())))
+            self.store.run(
+                "INSERT INTO consents (subject, client_id, created, scopes) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (subject, client_id) DO UPDATE SET scopes = excluded.scopes",
+                (record["subject"], record["client_id"], int(time.time()), " ".join(sorted(record["scopes"]))))
             audit.info("consent result=allowed client_id=%s email=%s", record["client_id"], record["email"])
             response = self._finish(record)
         response.delete_cookie(_consent_cookie(consent_id), path=CONSENT_PATH)
@@ -292,7 +296,7 @@ class Provider:
                 "redirect_uri": str(params.redirect_uri),
                 "redirect_uri_provided_explicitly": params.redirect_uri_provided_explicitly,
                 "expires_at": time.time() + CODE_TTL}
-        self.store.run("INSERT INTO codes VALUES (?, ?, ?)",
+        self.store.run("INSERT INTO codes (code, data, expires) VALUES (?, ?, ?)",
                        (token_hash(code), json.dumps(data), int(time.time()) + CODE_TTL))
         return self._redirect(record, code=code)
 
@@ -329,11 +333,21 @@ class Provider:
 
     async def exchange_authorization_code(self, client: OAuthClientInformationFull,
                                           authorization_code: AuthorizationCode) -> OAuthToken:
-        if self.store.take("codes", token_hash(authorization_code.code)) is None:
+        # A code works once. It stays stored, with the token family it produced, until it expires: if it comes
+        # back, it was intercepted, so the tokens it issued are revoked too (RFC 6749 4.1.2).
+        family, key = secrets.token_hex(16), token_hash(authorization_code.code)
+        with self.store.lock:
+            won = self.store.db.execute("UPDATE codes SET family = ? WHERE code = ? AND family IS NULL",
+                                        (family, key)).rowcount
+            used = None if won else self.store.db.execute("SELECT family FROM codes WHERE code = ?", (key,)).fetchone()
+        if not won:
+            if used and used[0]:
+                self._revoke_family(used[0])
+                audit.info("code_reuse client_id=%s family_revoked=1", client.client_id)
             raise TokenError("invalid_grant", "authorization code already used or expired")
         email = getattr(authorization_code, "email", "")
         return self._issue(client.client_id, authorization_code.subject or "", email, authorization_code.scopes,
-                           family=secrets.token_hex(16))
+                           family=family)
 
     def _issue(self, client_id: str, subject: str, email: str, scopes: list[str], family: str) -> OAuthToken:
         access, refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(32)

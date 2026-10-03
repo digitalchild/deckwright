@@ -515,3 +515,39 @@ def test_auth_database_files_are_owner_only(tmp_path):
         path = tmp_path / name
         if path.exists():
             assert path.stat().st_mode & 0o077 == 0, name
+
+
+def test_reused_code_revokes_the_tokens_it_issued(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    _patch_google(monkeypatch)
+    with TestClient(app, base_url=BASE) as client:
+        client_id = _register(client)
+        verifier, challenge = _pkce()
+        resp = _approve(client, _callback(client, _authorize(client, client_id, challenge)))
+        code = parse_qs(urlparse(resp.headers["location"]).query)["code"][0]
+        data = {"grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT,
+                "client_id": client_id, "code_verifier": verifier}
+        first = client.post("/token", data=data).json()
+        bearer = {"Authorization": f"Bearer {first['access_token']}"}
+        assert client.get("/v1/templates", headers=bearer).status_code == 200
+        assert client.post("/token", data=data).status_code == 400
+        assert client.get("/v1/templates", headers=bearer).status_code == 401
+
+
+def test_consent_is_asked_again_for_wider_scopes(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    _patch_google(monkeypatch)
+
+    def sign_in(client, client_id, scope):
+        _, challenge = _pkce()
+        resp = client.get("/authorize", params={
+            "client_id": client_id, "redirect_uri": REDIRECT, "response_type": "code", "scope": scope,
+            "code_challenge": challenge, "code_challenge_method": "S256", "state": "s"}, follow_redirects=False)
+        state = parse_qs(urlparse(resp.headers["location"]).query)["state"][0]
+        return _callback(client, state)
+
+    with TestClient(app, base_url=BASE) as client:
+        client_id = _register(client)
+        assert _approve(client, sign_in(client, client_id, "templates:read")).status_code == 302
+        assert sign_in(client, client_id, "templates:read").status_code == 302  # same scope: no prompt
+        assert sign_in(client, client_id, "decks templates:read").status_code == 200  # wider: prompt again
