@@ -11,10 +11,10 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_PROJECT
 WORKDIR /src
 # Dependencies first, so code changes do not rebuild this layer.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --extra google --no-install-project
 COPY README.md LICENSE ./
 COPY src ./src
-RUN uv sync --frozen --no-dev --no-editable
+RUN uv sync --frozen --no-dev --extra google --no-editable
 
 FROM python:3.13-slim-trixie@sha256:bb2988715db2cf7ace7b53f38f3cffbef7c7046a656bee66245eb0ed386e2e81
 # Security updates on top of the pinned base, then the runtime packages. pip is removed: the app runs

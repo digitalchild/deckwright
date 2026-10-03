@@ -35,16 +35,24 @@ app = FastAPI(
 )
 
 
-# Set by deckwright.server for a remote server: the auth settings and the config. None means local use.
-app.state.auth = None
-app.state.settings = None
+# deckwright.server puts {"settings": Settings | None, "auth": resource metadata URL | None} in each request's
+# scope under this key. Without it (plain `deckwright serve` or tests) the API runs in local mode.
+SCOPE_KEY = "deckwright"
+
+
+def _server(request: Request) -> dict[str, Any]:
+    return request.scope.get(SCOPE_KEY) or {}
+
+
+def _settings(request: Request) -> Any:
+    return _server(request).get("settings")
 
 
 def need(scope: str) -> Any:
     """A route dependency: with auth on, the caller needs a valid bearer token that carries this scope."""
 
     def check(request: Request) -> None:
-        auth = request.app.state.auth
+        auth = _server(request).get("auth")
         if auth is None:
             return
         user = request.scope.get("user")
@@ -63,7 +71,7 @@ DECKS = [need("decks")]
 
 
 def _allow_local(request: Request) -> bool:
-    settings = request.app.state.settings
+    settings = _settings(request)
     return settings.allow_local_files if settings is not None else ALLOW_LOCAL
 
 
@@ -74,7 +82,7 @@ def _subject(request: Request) -> str | None:
 
 def _check_owner(request: Request, deck_id: str) -> None:
     """On a remote server, only the person who built a deck may fetch it by id."""
-    if request.app.state.settings is None:
+    if _settings(request) is None:
         service.deck_path(deck_id)
         return
     service.check_owner(deck_id, _subject(request))
@@ -82,7 +90,7 @@ def _check_owner(request: Request, deck_id: str) -> None:
 
 def _build(request: Request, spec: DeckSpec, name: str | None = None) -> dict[str, Any]:
     """Check the spec against this server's policy, build the deck and audit it on a remote server."""
-    settings = request.app.state.settings
+    settings = _settings(request)
     if settings is None and spec.output == "slides" and not ALLOW_SLIDES:
         raise HTTPException(403, "Google Slides output is disabled on this server; set DECKWRIGHT_ALLOW_SLIDES=1")
     _remote(request, spec)
@@ -99,7 +107,7 @@ def _build(request: Request, spec: DeckSpec, name: str | None = None) -> dict[st
 
 
 def _remote(request: Request, spec: DeckSpec) -> None:
-    settings = request.app.state.settings
+    settings = _settings(request)
     if settings is not None:
         try:
             service.check_spec(spec, settings)
@@ -193,8 +201,8 @@ def plan(request: Request, spec: DeckSpec) -> list[dict[str, Any]]:
 @app.post("/v1/presentations", dependencies=DECKS)
 def create(request: Request, spec: DeckSpec, name: str | None = Query(None)) -> dict[str, Any]:
     out = _build(request, spec, name)
-    if request.app.state.settings is not None:
-        return service.public_result(out, request.app.state.settings)
+    if _settings(request) is not None:
+        return service.public_result(out, _settings(request))
     out.pop("path")
     out["diagrams"] = [f"/v1/presentations/{out['id']}/diagrams/{Path(d).name}" for d in out["diagrams"]]
     out["download_url"] = f"/v1/presentations/{out['id']}.pptx"

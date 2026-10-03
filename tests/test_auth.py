@@ -21,20 +21,10 @@ from starlette.testclient import TestClient
 
 from deckwright import config, server
 from deckwright.auth import GoogleError, Provider, check_id_token
+from deckwright.security import token_hash
 
 REDIRECT = "https://claude.ai/api/mcp/auth_callback"
 BASE = "https://decks.example.com"
-
-
-@pytest.fixture(autouse=True)
-def _reset_api_state():
-    """build_app() mutates the shared deckwright.api singleton; put it back so test_api.py
-    keeps working regardless of test order."""
-    yield
-    from deckwright import api
-
-    api.app.state.auth = None
-    api.app.state.settings = None
 
 
 def _settings(tmp_path):
@@ -551,3 +541,39 @@ def test_consent_is_asked_again_for_wider_scopes(output_dir, tmp_path, monkeypat
         assert _approve(client, sign_in(client, client_id, "templates:read")).status_code == 302
         assert sign_in(client, client_id, "templates:read").status_code == 302  # same scope: no prompt
         assert sign_in(client, client_id, "decks templates:read").status_code == 200  # wider: prompt again
+
+
+def test_refresh_rotation_keeps_the_session_expiry(output_dir, tmp_path, monkeypatch):
+    provider = Provider(_settings(tmp_path))
+    app = server.build_app(provider.s, provider)
+    _patch_google(monkeypatch)
+    with TestClient(app, base_url=BASE) as client:
+        client_id = _register(client)
+        tokens = _full_flow(client, client_id)
+
+        def refresh_expiry(token):
+            return provider.store.run("SELECT expires FROM tokens WHERE hash = ?", (token_hash(token),))[0][0]
+
+        first = refresh_expiry(tokens["refresh_token"])
+        new = client.post("/token", data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"],
+                                          "client_id": client_id}).json()
+        assert refresh_expiry(new["refresh_token"]) == first
+
+
+def test_redirect_uris_with_user_info_are_refused(output_dir, tmp_path):
+    app = server.build_app(_settings(tmp_path))
+    with TestClient(app, base_url=BASE) as client:
+        resp = client.post("/register", json={"redirect_uris": ["https://claude.ai@evil.example/cb"],
+                                              "token_endpoint_auth_method": "none"})
+        assert resp.status_code == 400
+
+
+def test_unused_registrations_are_capped(output_dir, tmp_path, monkeypatch):
+    import deckwright.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "MAX_UNUSED_CLIENTS", 2)
+    app = server.build_app(_settings(tmp_path))
+    with TestClient(app, base_url=BASE) as client:
+        codes = [client.post("/register", json={"redirect_uris": [REDIRECT], "token_endpoint_auth_method": "none"}
+                             ).status_code for _ in range(3)]
+    assert codes == [201, 201, 400]

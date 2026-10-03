@@ -32,7 +32,7 @@ log = logging.getLogger("deckwright")
 # Browser steps come from each person's own address. /register, /token and /revoke come from the app's
 # servers (claude.ai calls them from a few shared addresses for every user), so they get a higher limit.
 BROWSER_AUTH_PATHS = ("/authorize", CALLBACK_PATH, CONSENT_PATH)
-SERVER_AUTH_PATHS = ("/register", "/token", "/revoke")
+SERVER_AUTH_PATHS = ("/token", "/revoke")
 API_DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
 MEDIA = {".pptx": api.PPTX_MIME, ".excalidraw": "application/json"}
 
@@ -42,14 +42,15 @@ class _DocsGuard:
     (it is in the open source repo), and a browser cannot send a bearer token, so enabled docs are public.
     Every API call made from them still needs a token."""
 
-    def __init__(self, app: ASGIApp, show: bool):
-        self.app, self.show = app, show
+    def __init__(self, app: ASGIApp, show: bool, config: dict):
+        self.app, self.show, self.config = app, show, config
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if not self.show and scope["type"] == "http" and scope["path"].startswith(API_DOC_PATHS):
             await JSONResponse({"detail": "Not Found"}, 404)(scope, receive, send)
             return
-        await self.app(scope, receive, send)
+        # This server's settings travel with each request, so two apps in one process never share them.
+        await self.app({**scope, api.SCOPE_KEY: self.config}, receive, send)
 
 
 def build_app(settings: config.Settings, provider: Provider | None = None, host: str = "127.0.0.1") -> ASGIApp:
@@ -86,14 +87,17 @@ def build_app(settings: config.Settings, provider: Provider | None = None, host:
     app = mcp.streamable_http_app(transport_security=transport, max_request_body_size=settings.max_body_bytes,
                                   host=host)
 
-    api.app.state.settings = settings if settings.remote else None
-    api.app.state.auth = str(build_resource_metadata_url(settings.mcp_url)) if provider is not None else None
-    app.router.routes.append(Mount("/", app=_DocsGuard(api.app, show=settings.api_docs or not settings.remote)))
+    server_config = {"settings": settings if settings.remote else None,
+                     "auth": str(build_resource_metadata_url(settings.mcp_url)) if provider is not None else None}
+    app.router.routes.append(Mount("/", app=_DocsGuard(api.app, show=settings.api_docs or not settings.remote,
+                                                        config=server_config)))
 
     wrapped: ASGIApp = app
     wrapped = RateLimitMiddleware(wrapped, ("/files/",), RateLimiter(120, 60), settings.trusted_proxies)
     wrapped = RateLimitMiddleware(wrapped, BROWSER_AUTH_PATHS, RateLimiter(30, 60), settings.trusted_proxies)
     wrapped = RateLimitMiddleware(wrapped, SERVER_AUTH_PATHS, RateLimiter(600, 60), settings.trusted_proxies)
+    # Registration happens once per app install, not per request, so it gets a much lower limit.
+    wrapped = RateLimitMiddleware(wrapped, ("/register",), RateLimiter(60, 3600), settings.trusted_proxies)
     wrapped = BodyLimitMiddleware(wrapped, settings.max_body_bytes)
     return SecurityHeadersMiddleware(wrapped, hsts=(settings.public_url or "").startswith("https://"))
 

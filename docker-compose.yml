@@ -15,12 +15,16 @@ services:
       DECKWRIGHT_AUTH_ALLOWED_DOMAINS: example.com
       DECKWRIGHT_SECRET_KEY_FILE: /run/secrets/secret_key
       DECKWRIGHT_GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
-      DECKWRIGHT_TRUSTED_PROXIES: 172.16.0.0/12   # the Docker network the proxy connects from
+      # The host's reverse proxy reaches the container through this network's gateway. Trust only that
+      # address for X-Forwarded-For, never a whole range other containers could use.
+      DECKWRIGHT_TRUSTED_PROXIES: 172.30.57.1
     secrets:
       - secret_key
       - google_client_secret
     volumes:
       - deckwright-data:/data
+    networks:
+      - deckwright
     read_only: true
     tmpfs:
       - /tmp:size=512m
@@ -39,3 +43,10 @@ secrets:
 
 volumes:
   deckwright-data:
+
+networks:
+  deckwright:
+    ipam:
+      config:
+        - subnet: 172.30.57.0/24
+          gateway: 172.30.57.1

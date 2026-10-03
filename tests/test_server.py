@@ -28,17 +28,6 @@ SPEC_TWO_SLIDES = {
 }
 
 
-@pytest.fixture(autouse=True)
-def _reset_api_state():
-    """build_app() mutates the shared deckwright.api singleton; put it back so test_api.py
-    keeps working regardless of test order."""
-    yield
-    from deckwright import api
-
-    api.app.state.auth = None
-    api.app.state.settings = None
-
-
 def _remote_settings(tmp_path, **over) -> Settings:
     base = dict(
         public_url="https://decks.example.com",
@@ -314,3 +303,13 @@ def test_remote_mcp_preview_refuses_other_users_decks(output_dir, tmp_path):
         service.check_owner(deck, None)
     unowned = service.create(spec)["id"]
     service.check_owner(unowned, "anyone")
+
+
+def test_two_apps_in_one_process_keep_their_own_settings(output_dir, tmp_path):
+    from deckwright import config, server
+
+    remote, _ = _build(tmp_path)
+    local = server.build_app(config.Settings(data_dir=tmp_path / "local"))
+    with TestClient(remote, base_url="https://decks.example.com") as r, TestClient(local) as lo:
+        assert lo.get("/v1/templates").status_code == 200
+        assert r.get("/v1/templates").status_code == 401  # building the local app did not turn auth off

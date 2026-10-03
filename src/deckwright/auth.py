@@ -55,6 +55,7 @@ CODE_TTL = 600
 PENDING_TTL = 600
 ACCESS_TTL = 3600
 REFRESH_TTL = 30 * 86400
+MAX_UNUSED_CLIENTS = 5000
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS clients (
@@ -143,6 +144,9 @@ class Provider:
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         _check_redirect_uris([str(u) for u in client_info.redirect_uris or []])
+        unused = self.store.run("SELECT COUNT(*) FROM clients WHERE kind = 'dcr' AND used = 0")[0][0]
+        if unused >= MAX_UNUSED_CLIENTS:  # bounded until the daily sweep drops abandoned registrations
+            raise RegistrationError("invalid_client_metadata", "too many pending registrations; try again later")
         self._save_client(client_info, "dcr", client_info.client_name)
         audit.info("client_registered client_id=%s kind=dcr name=%r", client_info.client_id, client_info.client_name)
 
@@ -248,9 +252,10 @@ class Provider:
         self.store.run("INSERT INTO pending VALUES (?, ?, ?)",
                        (token_hash("consent:" + consent_id), json.dumps(record), int(time.time()) + PENDING_TTL))
         redirect = urllib.parse.urlparse(record["params"]["redirect_uri"])
-        target = f"{redirect.scheme}://{redirect.netloc}"
+        host = redirect.hostname + (f":{redirect.port}" if redirect.port else "")
+        target = f"{redirect.scheme}://{host}"
         page = CONSENT_HTML.format(
-            client=html.escape(client.client_name or "An unnamed app"), host=html.escape(redirect.netloc),
+            client=html.escape(client.client_name or "An unnamed app"), host=html.escape(host),
             email=html.escape(record["email"]), scopes="".join(f"<li>{html.escape(SCOPE_TEXT[s])}</li>"
                                                               for s in record["scopes"]),
             consent_id=html.escape(consent_id), action=CONSENT_PATH)
@@ -349,16 +354,21 @@ class Provider:
         return self._issue(client.client_id, authorization_code.subject or "", email, authorization_code.scopes,
                            family=family)
 
-    def _issue(self, client_id: str, subject: str, email: str, scopes: list[str], family: str) -> OAuthToken:
+    def _issue(self, client_id: str, subject: str, email: str, scopes: list[str], family: str,
+               refresh_expires: int | None = None) -> OAuthToken:
+        """New tokens. A rotated refresh token keeps its family's expiry, so a session ends REFRESH_TTL after
+        the Google sign-in and the account and domain are checked again at least that often."""
         access, refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         now = int(time.time())
+        refresh_expires = refresh_expires or now + REFRESH_TTL
         with self.store.lock:
             self.store.db.execute("UPDATE clients SET used = 1 WHERE client_id = ? AND used = 0", (client_id,))
-            for tok, kind, ttl in ((access, "access", ACCESS_TTL), (refresh, "refresh", REFRESH_TTL)):
+            for tok, kind, expires in ((access, "access", min(now + ACCESS_TTL, refresh_expires)),
+                                       (refresh, "refresh", refresh_expires)):
                 self.store.db.execute(
                     "INSERT INTO tokens (hash, kind, family, client_id, subject, email, scopes, expires) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (token_hash(tok), kind, family, client_id, subject, email, " ".join(scopes), now + ttl))
+                    (token_hash(tok), kind, family, client_id, subject, email, " ".join(scopes), expires))
         return OAuthToken(access_token=access, token_type="Bearer", expires_in=ACCESS_TTL, refresh_token=refresh,
                           scope=" ".join(scopes))
 
@@ -395,7 +405,7 @@ class Provider:
         if not marked:
             raise TokenError("invalid_grant", "refresh token already used")
         return self._issue(client.client_id, refresh_token.subject or "", getattr(refresh_token, "email", ""),
-                           granted, family)
+                           granted, family, refresh_expires=refresh_token.expires_at)
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         row = self._token_row(token, "access")
@@ -491,7 +501,7 @@ def _check_redirect_uris(uris: list[str]) -> None:
     for uri in uris:
         u = urllib.parse.urlparse(uri)
         loopback = u.scheme == "http" and u.hostname in LOOPBACK
-        if not (u.scheme == "https" or loopback) or u.fragment or not u.hostname:
+        if not (u.scheme == "https" or loopback) or u.fragment or not u.hostname or u.username or u.password:
             raise RegistrationError("invalid_redirect_uri", f"redirect_uri must be https or loopback http: {uri}")
 
 

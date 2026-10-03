@@ -141,7 +141,7 @@ Safety rule: in remote mode with auth off, the server refuses to start unless `D
 
 Deck privacy: in remote mode each deck records the person who built it. Only that person can download, preview or fetch its diagrams by id. Signed download links work for anyone who holds them, until they expire.
 
-Rate limits: browser steps (`/authorize`, the Google callback, `/oauth/consent`) allow 30 requests per minute per address. `/register`, `/token` and `/revoke` allow 600, because claude.ai calls them from a few shared addresses for all users.
+Rate limits: browser steps (`/authorize`, the Google callback, `/oauth/consent`) allow 30 requests per minute per address. `/token` and `/revoke` allow 600, because claude.ai calls them from a few shared addresses for all users. `/register` allows 60 per hour per address, and at most 5000 registrations may wait for a first sign-in at one time.
 
 Secrets can also come from files (`DECKWRIGHT_SECRET_KEY_FILE`, `DECKWRIGHT_GOOGLE_CLIENT_SECRET_FILE`), so Docker secrets work without env vars.
 
@@ -150,7 +150,8 @@ Secrets can also come from files (`DECKWRIGHT_SECRET_KEY_FILE`, `DECKWRIGHT_GOOG
 Every phase meets these rules before it is done.
 
 Auth and tokens:
-- OAuth 2.1 rules: PKCE (S256) required, exact redirect URI match, short-lived single-use authorization codes (10 minutes), refresh token rotation with reuse detection.
+- OAuth 2.1 rules: PKCE (S256) required, exact redirect URI match, short-lived single-use authorization codes (10 minutes, and a reused code revokes the tokens it issued), refresh token rotation with reuse detection, and a fixed 30-day session from sign-in.
+- Redirect URIs: https, or http on loopback only. No user info (`user@host`) or fragments.
 - Consent per app: registration is open, so after Google sign-in Deckwright shows a consent page that names the app and its redirect host. A code is issued only after the person selects Allow. The answer is bound to the browser with a `SameSite=Strict` cookie and remembered per person and app. This closes the confused-deputy issue that the MCP security best practices describe for proxies with dynamic client registration.
 - Opaque random tokens (`secrets.token_urlsafe(32)`). Stored as SHA-256 hashes. Compared with `hmac.compare_digest`.
 - Tokens bound to the resource (`validate_token_resource=True`), so a token for another server is refused.
@@ -212,7 +213,7 @@ Done when: a deck built over remote MCP downloads from its link in a browser, an
 - New module `auth.py`: a class that implements `OAuthAuthorizationServerProvider`, backed by `sqlite3` in `/data/auth.db`.
 - The Google callback route, ID token check, `email_verified` and `hd` check against the allowed domains.
 - Pass `auth_server_provider` and `AuthSettings` (dynamic registration on, revocation on, `resource_server_url` set to `{PUBLIC_URL}/mcp`, `validate_token_resource=True`) to `MCPServer` when auth is on.
-- Hash stored tokens. Access token lifetime 1 hour. Refresh token lifetime 30 days.
+- Hash stored tokens. Access token lifetime 1 hour. A session lasts 30 days from the Google sign-in: refresh rotation does not extend it, so the account and domain are checked again at least every 30 days.
 - Verify the Google ID token with Google's public keys. Prefer a stdlib-only check, or the tokeninfo endpoint, over a new dependency. If a library is needed, ask first.
 - The bearer dependency on every `/v1` route, with scopes.
 - `deckwright auth client add|list|revoke` for API clients.

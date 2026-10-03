@@ -405,7 +405,7 @@ print(result.warnings)
 | `DECKWRIGHT_CACHE` | `~/.cache/deckwright` | Private LibreOffice profile, loaded with the pack's own fonts |
 | `XDG_CONFIG_HOME` | `~/.config` | Base folder for `deckwright/templates/`, the installed template packs |
 | `DECKWRIGHT_GOOGLE_CLIENT_SECRETS` | unset | Path to the OAuth client secrets JSON, used by `deckwright auth google` when `--client-secrets` is not given |
-| `DECKWRIGHT_ALLOW_SLIDES` | unset | `1` lets HTTP API requests upload decks to this server's Google Drive |
+| `DECKWRIGHT_ALLOW_SLIDES` | unset | `1` lets HTTP API and remote MCP requests upload decks to this server's Google Drive. The Docker image includes the `google` extra this needs |
 | `DECKWRIGHT_PUBLIC_URL` | unset | Public HTTPS base URL. Turns on remote mode (`deckwright server`). Used as the OAuth issuer and for download links |
 | `DECKWRIGHT_SECRET_KEY` | unset | Signs download links and client secrets. Required in remote mode, at least 32 characters (`openssl rand -hex 32`). Rotating it invalidates every client secret and download link |
 | `DECKWRIGHT_GOOGLE_CLIENT_ID` | unset | Google OAuth client (type "Web application"). Setting it turns auth on |
@@ -416,7 +416,7 @@ print(result.warnings)
 | `DECKWRIGHT_MAX_BODY_BYTES` | `5242880` (5 MB) | Request body size limit on the remote server |
 | `DECKWRIGHT_MAX_SLIDES` | `100` | Slide count limit on a deck spec, on the remote server |
 | `DECKWRIGHT_DATA_DIR` | `/data` | Base folder for `auth.db`, set by the image |
-| `DECKWRIGHT_TRUSTED_PROXIES` | unset | Comma-separated IP addresses or networks allowed to set `X-Forwarded-For` (your reverse proxy) |
+| `DECKWRIGHT_TRUSTED_PROXIES` | unset | Comma-separated IP addresses or networks allowed to set `X-Forwarded-For`. Give the exact address your reverse proxy connects from, for example the gateway of a fixed Docker network (see `docker-compose.yml`). Never trust a whole range that other containers can use |
 | `DECKWRIGHT_API_DOCS` | unset | `1` serves the OpenAPI docs (`/docs`, `/openapi.json`) in remote mode. The pages are public, because a browser cannot send a token; every API call still needs one |
 | `DECKWRIGHT_INSECURE_NO_AUTH` | unset | `1` lets remote mode start without auth. For a laptop, or a server already protected by your own SSO proxy. Logs a warning on every start |
 
