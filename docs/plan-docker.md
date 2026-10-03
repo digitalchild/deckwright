@@ -80,7 +80,7 @@ Google tokens are used once, at sign-in. Deckwright does not keep them.
 - `deckwright server` builds one ASGI app. The MCP app (with the SDK auth routes) comes first. The FastAPI app is mounted after it, so the `/v1/...` paths do not change.
 - A FastAPI dependency on every `/v1` route checks the bearer token with the same provider that `/mcp` uses. A missing or bad token returns 401 with a `WWW-Authenticate: Bearer` header. No route is exempt.
 - Scopes: `decks` (build, plan, download, preview) and `templates:read` (brand, layouts, templates, thumbnails). Claude connectors get both. Registered API clients get only the scopes the admin grants.
-- `/docs`, `/redoc` and `/openapi.json` are off in remote mode. `DECKWRIGHT_API_DOCS=1` turns them on, still behind auth.
+- `/docs`, `/redoc` and `/openapi.json` are off in remote mode. `DECKWRIGHT_API_DOCS=1` turns them on. The docs pages are public (the schema is in the open source repo, and a browser cannot send a bearer token); every API call still needs a token.
 - `deckwright serve` (API only) and `deckwright mcp --http` (MCP only) stay for local use. In remote mode they apply the same auth, so no command can expose an open server by accident.
 
 Register an API client (for example an n8n OAuth2 credential):
@@ -134,10 +134,14 @@ Or does the review on a laptop, then copies the pack folder into the volume. Bot
 | `DECKWRIGHT_AUTH_ALLOWED_DOMAINS` | for auth | Comma-separated Google Workspace domains, for example `example.com`. Auth refuses to start without it. |
 | `DECKWRIGHT_DOWNLOAD_TTL` | no | Download link lifetime in seconds. Default `86400`. |
 | `DECKWRIGHT_TEMPLATES`, `DECKWRIGHT_OUTPUT_DIR` | no | The image sets `XDG_CONFIG_HOME=/data` (packs live in `/data/deckwright/templates`) and `DECKWRIGHT_OUTPUT_DIR=/data/output`. |
-| `DECKWRIGHT_API_DOCS` | no | `1` serves the OpenAPI docs in remote mode, behind auth. |
+| `DECKWRIGHT_API_DOCS` | no | `1` serves the OpenAPI docs in remote mode. The pages are public; API calls still need a token. |
 | `DECKWRIGHT_INSECURE_NO_AUTH` | no | `1` lets remote mode start without auth. For teams that put their own SSO proxy in front. Logs a warning on every start. |
 
-Safety rule: in remote mode with auth off, the server refuses to start unless `DECKWRIGHT_INSECURE_NO_AUTH=1`. Secure is the default. Insecure needs an explicit choice.
+Safety rule: in remote mode with auth off, the server refuses to start unless `DECKWRIGHT_INSECURE_NO_AUTH=1`. Secure is the default. Insecure needs an explicit choice. Local mode (no `DECKWRIGHT_PUBLIC_URL`) trusts every caller, so it listens only on loopback, with no override.
+
+Deck privacy: in remote mode each deck records the person who built it. Only that person can download, preview or fetch its diagrams by id. Signed download links work for anyone who holds them, until they expire.
+
+Rate limits: browser steps (`/authorize`, the Google callback, `/oauth/consent`) allow 30 requests per minute per address. `/register`, `/token` and `/revoke` allow 600, because claude.ai calls them from a few shared addresses for all users.
 
 Secrets can also come from files (`DECKWRIGHT_SECRET_KEY_FILE`, `DECKWRIGHT_GOOGLE_CLIENT_SECRET_FILE`), so Docker secrets work without env vars.
 

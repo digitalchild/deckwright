@@ -236,15 +236,18 @@ Deckwright publishes a Docker image so a team can run one shared server. Claude 
 This runs the full server on your own machine, with auth off. Bind it to `127.0.0.1` only, and never use this setup for a server other people can reach.
 
 ```bash
-docker run --rm -p 127.0.0.1:8765:8765 -e DECKWRIGHT_INSECURE_NO_AUTH=1 \
-  ghcr.io/digitalchild/deckwright deckwright server --host 0.0.0.0
+docker run --rm -p 127.0.0.1:8765:8765 \
+  -e DECKWRIGHT_PUBLIC_URL=http://localhost:8765 \
+  -e DECKWRIGHT_SECRET_KEY="$(openssl rand -hex 32)" \
+  -e DECKWRIGHT_INSECURE_NO_AUTH=1 \
+  ghcr.io/digitalchild/deckwright
 ```
 
 **Warning: this is for a laptop only.** `DECKWRIGHT_INSECURE_NO_AUTH=1` turns off sign-in. Anyone who can reach the port can use the server. Only run it this way behind the loopback address, on a machine you control.
 
-Add the connector in Claude at `http://127.0.0.1:8765/mcp`. See [docs/connect-claude.md](docs/connect-claude.md) for the connector steps.
+Add the connector in Claude at `http://localhost:8765/mcp`. Use `localhost`, not `127.0.0.1`: the server accepts only the host name in `DECKWRIGHT_PUBLIC_URL`. See [docs/connect-claude.md](docs/connect-claude.md) for the connector steps.
 
-Without `DECKWRIGHT_INSECURE_NO_AUTH=1`, the server refuses to listen on a non-loopback host unless remote mode and auth are on. This stops an open server from shipping by accident.
+Outside remote mode, the server listens only on a loopback address, because local mode trusts every caller. In remote mode, it refuses to start without auth unless `DECKWRIGHT_INSECURE_NO_AUTH=1` is set. Even then, remote mode hides the template admin tools and refuses local image paths.
 
 ### Production, with docker-compose.yml
 
@@ -414,7 +417,7 @@ print(result.warnings)
 | `DECKWRIGHT_MAX_SLIDES` | `100` | Slide count limit on a deck spec, on the remote server |
 | `DECKWRIGHT_DATA_DIR` | `/data` | Base folder for `auth.db`, set by the image |
 | `DECKWRIGHT_TRUSTED_PROXIES` | unset | Comma-separated IP addresses or networks allowed to set `X-Forwarded-For` (your reverse proxy) |
-| `DECKWRIGHT_API_DOCS` | unset | `1` serves the OpenAPI docs in remote mode, still behind auth |
+| `DECKWRIGHT_API_DOCS` | unset | `1` serves the OpenAPI docs (`/docs`, `/openapi.json`) in remote mode. The pages are public, because a browser cannot send a token; every API call still needs one |
 | `DECKWRIGHT_INSECURE_NO_AUTH` | unset | `1` lets remote mode start without auth. For a laptop, or a server already protected by your own SSO proxy. Logs a warning on every start |
 
 Every variable above that holds a secret (`DECKWRIGHT_SECRET_KEY`, `DECKWRIGHT_GOOGLE_CLIENT_SECRET`) also accepts a `_FILE` variant, for example `DECKWRIGHT_SECRET_KEY_FILE`, which reads the value from a file. This is how `docker-compose.yml` passes Docker secrets.

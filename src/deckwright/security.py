@@ -21,11 +21,11 @@ def subkey(secret: str, purpose: str) -> bytes:
     return hmac.new(secret.encode(), f"deckwright:{purpose}".encode(), hashlib.sha256).digest()
 
 
-def _b64(data: bytes) -> str:
+def b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-def _unb64(text: str) -> bytes:
+def unb64url(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
@@ -33,17 +33,17 @@ def sign_file(key: bytes, deck_id: str, name: str, ttl: int, now: float | None =
     """A URL-safe token that names one output file and expires after ttl seconds."""
     payload = json.dumps([deck_id, name, int((time.time() if now is None else now) + ttl)], separators=(",", ":")).encode()
     sig = hmac.new(key, payload, hashlib.sha256).digest()
-    return f"{_b64(payload)}.{_b64(sig)}"
+    return f"{b64url(payload)}.{b64url(sig)}"
 
 
 def verify_file(key: bytes, token: str, now: float | None = None) -> tuple[str, str] | None:
     """(deck_id, name) for a valid, unexpired token, else None."""
     try:
         p, s = token.split(".", 1)
-        payload, sig = _unb64(p), _unb64(s)
+        payload, sig = unb64url(p), unb64url(s)
     except ValueError:
         return None
-    if _b64(payload) != p or _b64(sig) != s:  # one spelling per token: refuse non-canonical base64
+    if b64url(payload) != p or b64url(sig) != s:  # one spelling per token: refuse non-canonical base64
         return None
     if not hmac.compare_digest(hmac.new(key, payload, hashlib.sha256).digest(), sig):
         return None

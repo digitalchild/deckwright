@@ -92,14 +92,16 @@ def _meta_path(path: Path) -> Path:
     return path.with_suffix(".json")
 
 
-def create(spec: DeckSpec, name: str | None = None, allow_local_files: bool = True) -> dict[str, Any]:
+def create(spec: DeckSpec, name: str | None = None, allow_local_files: bool = True,
+           owner: str | None = None) -> dict[str, Any]:
+    """Build and save a deck. owner (a remote user's subject) limits who may download or preview it."""
     template = pack.load(spec.template)
     result = build_deck(spec, template, allow_local_files=allow_local_files)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     deck_id = _slug(name or spec.title)
     path = OUTPUT_DIR / f"{deck_id}.pptx"
     path.write_bytes(result.data)
-    _meta_path(path).write_text(json.dumps({"template": template.id}))
+    _meta_path(path).write_text(json.dumps({"template": template.id, **({"owner": owner} if owner else {})}))
     warnings = list(result.warnings)
     out = {
         "id": deck_id,
@@ -144,14 +146,23 @@ def deck_path(deck_id: str) -> Path:
     return path
 
 
-def _deck_template_id(path: Path) -> str | None:
-    meta = _meta_path(path)
-    if not meta.exists():
-        return None
+def _meta(path: Path) -> dict[str, Any]:
     try:
-        return json.loads(meta.read_text()).get("template")
-    except ValueError:
-        return None
+        return json.loads(_meta_path(path).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _deck_template_id(path: Path) -> str | None:
+    return _meta(path).get("template")
+
+
+def check_owner(deck_id: str, subject: str | None) -> None:
+    """Raise FileNotFoundError unless the deck exists and has no owner or belongs to subject.
+    Not found, rather than forbidden, so ids of other users' decks are not confirmed."""
+    owner = _meta(deck_path(deck_id)).get("owner")
+    if owner is not None and owner != subject:
+        raise FileNotFoundError(deck_id)
 
 
 _preview_lock = threading.Lock()

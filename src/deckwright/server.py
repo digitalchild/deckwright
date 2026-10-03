@@ -9,7 +9,6 @@ import logging
 import threading
 from urllib.parse import urlparse
 
-from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.server.auth.routes import build_resource_metadata_url
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
@@ -30,26 +29,26 @@ from .security import (
 
 log = logging.getLogger("deckwright")
 
-AUTH_PATHS = ("/register", "/authorize", "/token", "/revoke", CALLBACK_PATH, CONSENT_PATH)
+# Browser steps come from each person's own address. /register, /token and /revoke come from the app's
+# servers (claude.ai calls them from a few shared addresses for every user), so they get a higher limit.
+BROWSER_AUTH_PATHS = ("/authorize", CALLBACK_PATH, CONSENT_PATH)
+SERVER_AUTH_PATHS = ("/register", "/token", "/revoke")
 API_DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
 MEDIA = {".pptx": api.PPTX_MIME, ".excalidraw": "application/json"}
 
 
 class _DocsGuard:
-    """OpenAPI docs: hidden unless DECKWRIGHT_API_DOCS=1, and then only for signed-in callers when auth is on."""
+    """OpenAPI docs are hidden on a remote server unless DECKWRIGHT_API_DOCS=1. The schema holds no secrets
+    (it is in the open source repo), and a browser cannot send a bearer token, so enabled docs are public.
+    Every API call made from them still needs a token."""
 
-    def __init__(self, app: ASGIApp, show: bool, auth: bool):
-        self.app, self.show, self.auth = app, show, auth
+    def __init__(self, app: ASGIApp, show: bool):
+        self.app, self.show = app, show
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"].startswith(API_DOC_PATHS):
-            if not self.show:
-                await JSONResponse({"detail": "Not Found"}, 404)(scope, receive, send)
-                return
-            if self.auth and not isinstance(scope.get("user"), AuthenticatedUser):
-                await JSONResponse({"detail": "authentication required"}, 401,
-                                   headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
-                return
+        if not self.show and scope["type"] == "http" and scope["path"].startswith(API_DOC_PATHS):
+            await JSONResponse({"detail": "Not Found"}, 404)(scope, receive, send)
+            return
         await self.app(scope, receive, send)
 
 
@@ -80,10 +79,6 @@ def build_app(settings: config.Settings, provider: Provider | None = None, host:
         mcp.custom_route(CONSENT_PATH, methods=["POST"])(provider.consent)
 
     transport = None
-    if not settings.remote and host not in ("127.0.0.1", "localhost", "::1"):
-        # Local mode on a wider bind (DECKWRIGHT_INSECURE_NO_AUTH=1 behind the operator's own proxy): the
-        # public host name is unknown here, so Host checks cannot be configured.
-        transport = TransportSecuritySettings(enable_dns_rebinding_protection=False)
     if settings.remote:
         url = urlparse(settings.public_url)
         transport = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=[url.netloc],
@@ -93,12 +88,12 @@ def build_app(settings: config.Settings, provider: Provider | None = None, host:
 
     api.app.state.settings = settings if settings.remote else None
     api.app.state.auth = str(build_resource_metadata_url(settings.mcp_url)) if provider is not None else None
-    app.router.routes.append(Mount("/", app=_DocsGuard(api.app, show=settings.api_docs or not settings.remote,
-                                                        auth=provider is not None)))
+    app.router.routes.append(Mount("/", app=_DocsGuard(api.app, show=settings.api_docs or not settings.remote)))
 
     wrapped: ASGIApp = app
     wrapped = RateLimitMiddleware(wrapped, ("/files/",), RateLimiter(120, 60), settings.trusted_proxies)
-    wrapped = RateLimitMiddleware(wrapped, AUTH_PATHS, RateLimiter(30, 60), settings.trusted_proxies)
+    wrapped = RateLimitMiddleware(wrapped, BROWSER_AUTH_PATHS, RateLimiter(30, 60), settings.trusted_proxies)
+    wrapped = RateLimitMiddleware(wrapped, SERVER_AUTH_PATHS, RateLimiter(600, 60), settings.trusted_proxies)
     wrapped = BodyLimitMiddleware(wrapped, settings.max_body_bytes)
     return SecurityHeadersMiddleware(wrapped, hsts=(settings.public_url or "").startswith("https://"))
 

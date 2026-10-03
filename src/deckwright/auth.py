@@ -8,12 +8,12 @@ derived from DECKWRIGHT_SECRET_KEY and a per-client salt, so the database alone 
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import hmac
 import html
 import json
 import logging
+import os
 import secrets
 import sqlite3
 import threading
@@ -37,8 +37,8 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from .config import Settings
-from .security import subkey, token_hash
+from .config import LOOPBACK, Settings
+from .security import b64url, subkey, token_hash, unb64url
 
 log = logging.getLogger("deckwright.auth")
 audit = logging.getLogger("deckwright.audit")
@@ -82,14 +82,14 @@ class Store:
 
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():  # create it owner-only first; SQLite gives its -wal and -shm files the same mode
+            os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        if "used" not in {row[1] for row in self.db.execute("PRAGMA table_info(clients)")}:
+            self.db.execute("ALTER TABLE clients ADD COLUMN used INTEGER NOT NULL DEFAULT 0")
         self.lock = threading.Lock()
-        try:
-            path.chmod(0o600)
-        except OSError:
-            pass
 
     def run(self, sql: str, args: tuple = ()) -> list[tuple]:
         with self.lock:
@@ -109,9 +109,9 @@ class Store:
         with self.lock:
             for table in ("pending", "codes", "tokens"):
                 self.db.execute(f"DELETE FROM {table} WHERE expires < ?", (now,))
-            # Self-registered apps that hold no tokens after the longest token lifetime are abandoned.
-            self.db.execute("DELETE FROM clients WHERE kind = 'dcr' AND created < ? AND client_id NOT IN "
-                            "(SELECT client_id FROM tokens)", (now - REFRESH_TTL - 86400,))
+            # Self-registered apps that never completed a sign-in within a day are abandoned. Apps that did
+            # are kept: clients such as Claude cache their client_id and cannot recover if it disappears.
+            self.db.execute("DELETE FROM clients WHERE kind = 'dcr' AND used = 0 AND created < ?", (now - 86400,))
 
 
 class Provider:
@@ -150,7 +150,7 @@ class Provider:
             salt = secrets.token_hex(16)
             client.client_secret = self._secret(client.client_id, salt)  # the handler returns this object
         stored = client.model_copy(update={"client_secret": None})
-        self.store.run("INSERT INTO clients VALUES (?, ?, ?, ?, ?, ?)",
+        self.store.run("INSERT INTO clients (client_id, info, salt, kind, name, created) VALUES (?, ?, ?, ?, ?, ?)",
                        (client.client_id, stored.model_dump_json(), salt, kind, name, int(time.time())))
 
     def add_client(self, name: str, redirect_uris: list[str], scopes: list[str],
@@ -196,7 +196,7 @@ class Provider:
                 "verifier": verifier, "nonce": nonce}
         self.store.run("INSERT INTO pending VALUES (?, ?, ?)",
                        (token_hash(state), json.dumps(data), int(time.time()) + PENDING_TTL))
-        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        challenge = b64url(hashlib.sha256(verifier.encode()).digest())
         query = {
             "client_id": self.s.google_client_id, "redirect_uri": self.callback_url, "response_type": "code",
             "scope": "openid email", "state": state, "nonce": nonce, "code_challenge": challenge,
@@ -255,7 +255,7 @@ class Provider:
         csp = (f"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' {target}; "
                "frame-ancestors 'none'; base-uri 'none'")
         response = HTMLResponse(page, headers={"Content-Security-Policy": csp, "Cache-Control": "no-store"})
-        response.set_cookie(CONSENT_COOKIE, binding, max_age=PENDING_TTL, path=CONSENT_PATH, httponly=True,
+        response.set_cookie(_consent_cookie(consent_id), binding, max_age=PENDING_TTL, path=CONSENT_PATH, httponly=True,
                             secure=self.s.public_url.startswith("https://"), samesite="strict")
         return response
 
@@ -264,7 +264,7 @@ class Provider:
         form = await request.form()
         consent_id = str(form.get("consent_id", ""))
         record = self.store.take("pending", token_hash("consent:" + consent_id)) if consent_id else None
-        binding = request.cookies.get(CONSENT_COOKIE, "")
+        binding = request.cookies.get(_consent_cookie(consent_id), "") if consent_id else ""
         if record is None or not binding or not hmac.compare_digest(record["binding"], token_hash(binding)):
             return JSONResponse({"detail": "approval expired or invalid; start again from your app"}, 400)
         if form.get("decision") != "allow":
@@ -275,7 +275,7 @@ class Provider:
                            (record["subject"], record["client_id"], int(time.time())))
             audit.info("consent result=allowed client_id=%s email=%s", record["client_id"], record["email"])
             response = self._finish(record)
-        response.delete_cookie(CONSENT_COOKIE, path=CONSENT_PATH)
+        response.delete_cookie(_consent_cookie(consent_id), path=CONSENT_PATH)
         return response
 
     def _redirect(self, record: dict[str, Any], **kw: str) -> RedirectResponse:
@@ -339,6 +339,7 @@ class Provider:
         access, refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         now = int(time.time())
         with self.store.lock:
+            self.store.db.execute("UPDATE clients SET used = 1 WHERE client_id = ? AND used = 0", (client_id,))
             for tok, kind, ttl in ((access, "access", ACCESS_TTL), (refresh, "refresh", REFRESH_TTL)):
                 self.store.db.execute(
                     "INSERT INTO tokens (hash, kind, family, client_id, subject, email, scopes, expires) "
@@ -455,6 +456,11 @@ CONSENT_HTML = """<!doctype html>
 """
 
 
+def _consent_cookie(consent_id: str) -> str:
+    """One cookie per consent page, so two sign-ins in one browser do not overwrite each other."""
+    return f"{CONSENT_COOKIE}_{token_hash(consent_id)[:16]}"
+
+
 class _Code(AuthorizationCode):
     email: str = ""
 
@@ -470,13 +476,9 @@ def _check_redirect_uris(uris: list[str]) -> None:
         raise RegistrationError("invalid_redirect_uri", "at least one redirect_uri is required")
     for uri in uris:
         u = urllib.parse.urlparse(uri)
-        loopback = u.scheme == "http" and u.hostname in ("localhost", "127.0.0.1", "::1")
+        loopback = u.scheme == "http" and u.hostname in LOOPBACK
         if not (u.scheme == "https" or loopback) or u.fragment or not u.hostname:
             raise RegistrationError("invalid_redirect_uri", f"redirect_uri must be https or loopback http: {uri}")
-
-
-def _unb64(part: str) -> bytes:
-    return base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
 
 
 def check_id_token(id_token: str, client_id: str, nonce: str, domains: tuple[str, ...],
@@ -487,7 +489,7 @@ def check_id_token(id_token: str, client_id: str, nonce: str, domains: tuple[str
     token received this way. All claims are still checked.
     """
     try:
-        claims = json.loads(_unb64(id_token.split(".")[1]))
+        claims = json.loads(unb64url(id_token.split(".")[1]))
     except (IndexError, ValueError) as exc:
         raise GoogleError("malformed id_token") from exc
     now = time.time() if now is None else now

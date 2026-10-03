@@ -459,3 +459,59 @@ def test_approved_app_skips_consent_next_time(output_dir, tmp_path, monkeypatch)
         _, challenge = _pkce()
         resp = _callback(client, _authorize(client, client_id, challenge))
         assert resp.status_code == 302 and "code=" in resp.headers["location"]
+
+
+# --------------------------------------------------------------------------- deck ownership
+
+
+def test_decks_are_private_to_the_person_who_built_them(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    spec = {"slides": [{"layout": "title", "title": "Secret", "subtitle": "d"}]}
+    with TestClient(app, base_url=BASE) as client:
+        client_id = _register(client)
+        _patch_google(monkeypatch, sub="user-a", email="a@example.com")
+        alice = {"Authorization": f"Bearer {_full_flow(client, client_id)['access_token']}"}
+        _patch_google(monkeypatch, sub="user-b", email="b@example.com")
+        bob = {"Authorization": f"Bearer {_full_flow(client, client_id)['access_token']}"}
+
+        deck = client.post("/v1/presentations", json=spec, headers=alice).json()["id"]
+        assert client.get(f"/v1/presentations/{deck}.pptx", headers=alice).status_code == 200
+        assert client.get(f"/v1/presentations/{deck}.pptx", headers=bob).status_code == 404
+        assert client.get(f"/v1/presentations/{deck}/slides/1.png", headers=bob).status_code == 404
+        assert client.get(f"/v1/presentations/{deck}/diagrams/x.excalidraw", headers=bob).status_code == 404
+
+
+# --------------------------------------------------------------------------- store housekeeping
+
+
+def test_two_consent_pages_in_one_browser_both_work(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    with TestClient(app, base_url=BASE) as client:
+        _, first = _consent_page(client, monkeypatch, name="Claude Desktop")
+        _, second = _consent_page(client, monkeypatch, name="claude.ai")
+        assert _approve(client, first).status_code == 302
+        assert _approve(client, second).status_code == 302
+
+
+def test_sweep_keeps_used_apps_and_drops_abandoned_registrations(output_dir, tmp_path, monkeypatch):
+    provider = Provider(_settings(tmp_path))
+    app = server.build_app(provider.s, provider)
+    with TestClient(app, base_url=BASE) as client:
+        used = _register(client)
+        _patch_google(monkeypatch)
+        _full_flow(client, used)
+        abandoned = _register(client)
+    provider.store.run("UPDATE clients SET created = 0")
+    provider.store.run("DELETE FROM tokens")  # even with every token gone, a used app stays registered
+    provider.store.sweep()
+    ids = {row[0] for row in provider.store.run("SELECT client_id FROM clients")}
+    assert used in ids and abandoned not in ids
+
+
+def test_auth_database_files_are_owner_only(tmp_path):
+    provider = Provider(_settings(tmp_path))
+    provider.store.run("INSERT INTO pending VALUES ('k', '{}', 9999999999)")
+    for name in ("auth.db", "auth.db-wal", "auth.db-shm"):
+        path = tmp_path / name
+        if path.exists():
+            assert path.stat().st_mode & 0o077 == 0, name

@@ -51,10 +51,6 @@ REMOTE_INSTRUCTIONS = INSTRUCTIONS.split("\nAdd a template")[0].replace(
 _TOOLS: list[Callable[..., Any]] = []
 _ADMIN_TOOLS: list[Callable[..., Any]] = []
 _RESOURCES: list[tuple[str, Callable[..., Any]]] = []
-# Set by create() for a remote server; None means a local, trusted caller (stdio or localhost).
-SETTINGS: Settings | None = None
-
-
 def _tool(fn: Callable[..., Any]) -> Callable[..., Any]:
     _TOOLS.append(fn)
     return fn
@@ -126,34 +122,42 @@ def suggest_layout(kind: str, content: dict[str, Any], template: str | None = No
     return service.suggest(kind, content, template)
 
 
-@_tool
-def create_presentation(spec: DeckSpec, name: str | None = None) -> dict[str, Any]:
-    """Build a .pptx from a deck spec. Returns the id, file path, layout per slide, warnings and todos.
+def _deck_tools(settings: Settings | None) -> list[Callable[..., Any]]:
+    """create_presentation and preview_slides, bound to one server's settings (None: local, trusted caller)."""
 
-    Set "output": "slides" in the spec to also upload the deck to Google Drive as Google Slides
-    (needs `deckwright auth google` first); the result then also carries slides_id and slides_url.
+    def create_presentation(spec: DeckSpec, name: str | None = None) -> dict[str, Any]:
+        """Build a .pptx from a deck spec. Returns the id, a download link or file path, layout per slide,
+        warnings and todos.
 
-    Example spec:
-    {"template": "sample", "title": "My talk", "slides": [
-      {"kind": "title", "title": "Automating **support**", "subtitle": "Team offsite"},
-      {"kind": "agenda", "items": [{"label": "Why"}, {"label": "How"}, {"label": "Demo"}]},
-      {"kind": "stat", "value": "48%", "label": "Less manual work", "notes": "Speaker notes here"},
-      {"kind": "closing"}]}
-    """
-    if SETTINGS is None:
-        return service.create(spec, name, allow_local_files=True)
-    service.check_spec(spec, SETTINGS)
-    out = service.create(spec, name, allow_local_files=SETTINGS.allow_local_files)
-    service.audit_build(out, get_access_token())
-    return service.public_result(out, SETTINGS)
+        Set "output": "slides" in the spec to also upload the deck to Google Drive as Google Slides
+        (needs `deckwright auth google` first); the result then also carries slides_id and slides_url.
 
+        Example spec:
+        {"template": "sample", "title": "My talk", "slides": [
+          {"kind": "title", "title": "Automating **support**", "subtitle": "Team offsite"},
+          {"kind": "agenda", "items": [{"label": "Why"}, {"label": "How"}, {"label": "Demo"}]},
+          {"kind": "stat", "value": "48%", "label": "Less manual work", "notes": "Speaker notes here"},
+          {"kind": "closing"}]}
+        """
+        if settings is None:
+            return service.create(spec, name, allow_local_files=True)
+        service.check_spec(spec, settings)
+        token = get_access_token()
+        out = service.create(spec, name, allow_local_files=settings.allow_local_files,
+                             owner=token.subject if token else None)
+        service.audit_build(out, token)
+        return service.public_result(out, settings)
 
-@_tool
-def preview_slides(deck_id: str, first: int = 1, last: int | None = None) -> list[Image]:
-    """Render slides of a created deck to PNG images for visual review (needs LibreOffice).
-    Renders at most 8 slides per call."""
-    last = min(last or first + 7, first + 7)
-    return [Image(path=p) for p in service.preview(deck_id, first, last, dpi=40)]
+    def preview_slides(deck_id: str, first: int = 1, last: int | None = None) -> list[Image]:
+        """Render slides of a created deck to PNG images for visual review (needs LibreOffice).
+        Renders at most 8 slides per call."""
+        if settings is not None:
+            token = get_access_token()
+            service.check_owner(deck_id, token.subject if token else None)
+        last = min(last or first + 7, first + 7)
+        return [Image(path=p) for p in service.preview(deck_id, first, last, dpi=40)]
+
+    return [create_presentation, preview_slides]
 
 
 # --------------------------------------------------------------------------- template packs
@@ -245,8 +249,6 @@ def brand_resource(template: str) -> str:
 def create(settings: Settings | None = None, provider: Any = None) -> MCPServer:
     """An MCP server. With settings (remote mode) the admin tools are left out, and with a provider
     every request needs a bearer token from it."""
-    global SETTINGS
-    SETTINGS = settings
     auth = None
     if settings is not None and provider is not None:
         from .auth import SCOPES
@@ -262,7 +264,7 @@ def create(settings: Settings | None = None, provider: Any = None) -> MCPServer:
         )
     server = MCPServer("deckwright", instructions=REMOTE_INSTRUCTIONS if settings else INSTRUCTIONS, auth=auth,
                        auth_server_provider=provider if auth else None)
-    for fn in _TOOLS + ([] if settings else _ADMIN_TOOLS):
+    for fn in _TOOLS + _deck_tools(settings) + ([] if settings else _ADMIN_TOOLS):
         server.tool()(fn)
     for uri, fn in _RESOURCES:
         server.resource(uri, mime_type="application/json")(fn)

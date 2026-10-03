@@ -72,19 +72,70 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
+      # Release: build both platforms once, push under a staging tag, then scan and smoke test that exact
+      # digest on each platform. Only then add the version tags and sign. What ships is what was tested.
       - id: push
         if: startsWith(github.ref, 'refs/tags/v')
-        name: Build and push
+        name: Build and push (staging tag)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
           provenance: mode=max
           cache-from: type=gha
+
+      - name: Scan the release image (amd64)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.push.outputs.digest }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Scan the release image (arm64)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.push.outputs.digest }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Smoke test the release image on both platforms
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          REF: ${{ env.IMAGE }}@${{ steps.push.outputs.digest }}
+        run: |
+          for platform in linux/amd64 linux/arm64; do
+            docker run -d --name dw --platform "$platform" -e DECKWRIGHT_DATA_DIR=/tmp "$REF" \
+              deckwright server --host 127.0.0.1 --port 8765
+            ok=0
+            for i in $(seq 1 60); do
+              if docker exec dw python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health')"; then ok=1; break; fi
+              sleep 2
+            done
+            docker rm -f dw
+            [ "$ok" = 1 ] || { echo "smoke test failed on $platform"; exit 1; }
+          done
+
+      - name: Add the version tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          REF: ${{ env.IMAGE }}@${{ steps.push.outputs.digest }}
+        run: |
+          args=()
+          while IFS= read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <<< "$TAGS"
+          docker buildx imagetools create "${args[@]}" "$REF"
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         if: startsWith(github.ref, 'refs/tags/v')

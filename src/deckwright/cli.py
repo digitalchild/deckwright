@@ -164,11 +164,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _check_local_bind(host: str) -> None:
-    import os
+    """Local mode trusts every caller (admin tools, local files), so it only listens on loopback."""
+    from .config import LOOPBACK
 
-    if host not in ("127.0.0.1", "localhost", "::1") and os.environ.get("DECKWRIGHT_INSECURE_NO_AUTH") != "1":
-        raise SystemExit(f"error: refusing to listen on {host} without auth. Set DECKWRIGHT_PUBLIC_URL and the "
-                         "DECKWRIGHT_GOOGLE_* variables, or DECKWRIGHT_INSECURE_NO_AUTH=1 behind your own proxy")
+    if host not in LOOPBACK:
+        raise SystemExit(f"error: refusing to listen on {host} in local mode. Set DECKWRIGHT_PUBLIC_URL, "
+                         "DECKWRIGHT_SECRET_KEY and the DECKWRIGHT_GOOGLE_* variables for remote use")
 
 
 def _server(host: str, port: int) -> int:

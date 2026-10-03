@@ -177,13 +177,7 @@ def test_output_file_refuses_traversal_other_deck_and_bad_names(output_dir):
 # --------------------------------------------------------------------------- remote MCP tool set
 
 
-@pytest.fixture
-def _reset_mcp_settings():
-    yield
-    mcp_server.SETTINGS = None
-
-
-def test_remote_mcp_server_has_no_admin_tools(output_dir, tmp_path, _reset_mcp_settings):
+def test_remote_mcp_server_has_no_admin_tools(output_dir, tmp_path):
     settings = _remote_settings(tmp_path)
 
     async def names():
@@ -196,7 +190,7 @@ def test_remote_mcp_server_has_no_admin_tools(output_dir, tmp_path, _reset_mcp_s
         assert admin_tool not in tool_names
 
 
-def test_local_mcp_server_has_admin_tools(output_dir, _reset_mcp_settings):
+def test_local_mcp_server_has_admin_tools(output_dir):
     async def names():
         async with Client(mcp_server.create(), raise_exceptions=True) as c:
             tools = await c.list_tools()
@@ -283,3 +277,40 @@ def test_rate_limit_counts_per_client_not_per_path():
         assert c.get("/files/a").status_code == 200
         assert c.get("/files/b").status_code == 200
         assert c.get("/files/c").status_code == 429
+
+
+def test_local_mode_never_listens_beyond_loopback(monkeypatch):
+    monkeypatch.delenv("DECKWRIGHT_PUBLIC_URL", raising=False)
+    monkeypatch.setenv("DECKWRIGHT_INSECURE_NO_AUTH", "1")  # local mode trusts callers, so this is not enough
+    with pytest.raises(SystemExit):
+        cli.main(["server", "--host", "0.0.0.0"])
+
+
+def test_enabled_api_docs_are_served_without_a_token(output_dir, tmp_path):
+    app, _ = _build(tmp_path, api_docs=True)
+    with TestClient(app, base_url="https://decks.example.com") as c:
+        assert c.get("/openapi.json").status_code == 200
+        assert c.get("/v1/templates").status_code == 401
+
+
+def test_token_endpoint_has_a_higher_limit_than_browser_steps(output_dir, tmp_path):
+    app, _ = _build(tmp_path)
+    with TestClient(app, base_url="https://decks.example.com") as c:
+        token = [c.post("/token", data={"grant_type": "x"}).status_code for _ in range(40)]
+        browser = [c.get("/authorize").status_code for _ in range(40)]
+    assert 429 not in token
+    assert 429 in browser
+
+
+def test_remote_mcp_preview_refuses_other_users_decks(output_dir, tmp_path):
+    from deckwright.models import DeckSpec
+
+    spec = DeckSpec.model_validate({"slides": [{"layout": "title", "title": "Hi", "subtitle": "d"}]})
+    deck = service.create(spec, owner="user-a")["id"]
+    service.check_owner(deck, "user-a")
+    with pytest.raises(FileNotFoundError):
+        service.check_owner(deck, "user-b")
+    with pytest.raises(FileNotFoundError):
+        service.check_owner(deck, None)
+    unowned = service.create(spec)["id"]
+    service.check_owner(unowned, "anyone")

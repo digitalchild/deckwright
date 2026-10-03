@@ -28,11 +28,6 @@ ALLOW_LOCAL = os.environ.get("DECKWRIGHT_ALLOW_LOCAL_FILES") == "1"
 ALLOW_SLIDES = os.environ.get("DECKWRIGHT_ALLOW_SLIDES") == "1"
 
 
-def _check_output(spec: DeckSpec) -> None:
-    """Local API only. A remote server checks its settings in _remote (service.check_spec)."""
-    if app.state.settings is None and spec.output == "slides" and not ALLOW_SLIDES:
-        raise HTTPException(403, "Google Slides output is disabled on this server; set DECKWRIGHT_ALLOW_SLIDES=1")
-
 app = FastAPI(
     title="Deckwright",
     version="0.2.0",
@@ -70,6 +65,37 @@ DECKS = [need("decks")]
 def _allow_local(request: Request) -> bool:
     settings = request.app.state.settings
     return settings.allow_local_files if settings is not None else ALLOW_LOCAL
+
+
+def _subject(request: Request) -> str | None:
+    user = request.scope.get("user")
+    return user.access_token.subject if isinstance(user, AuthenticatedUser) else None
+
+
+def _check_owner(request: Request, deck_id: str) -> None:
+    """On a remote server, only the person who built a deck may fetch it by id."""
+    if request.app.state.settings is None:
+        service.deck_path(deck_id)
+        return
+    service.check_owner(deck_id, _subject(request))
+
+
+def _build(request: Request, spec: DeckSpec, name: str | None = None) -> dict[str, Any]:
+    """Check the spec against this server's policy, build the deck and audit it on a remote server."""
+    settings = request.app.state.settings
+    if settings is None and spec.output == "slides" and not ALLOW_SLIDES:
+        raise HTTPException(403, "Google Slides output is disabled on this server; set DECKWRIGHT_ALLOW_SLIDES=1")
+    _remote(request, spec)
+    user = request.scope.get("user")
+    token = user.access_token if isinstance(user, AuthenticatedUser) else None
+    try:
+        out = service.create(spec, name, allow_local_files=_allow_local(request),
+                             owner=token.subject if token else None)
+    except (TemplateError, SelectionError, PackError) as exc:
+        raise _bad(exc) from exc
+    if settings is not None:
+        service.audit_build(out, token)
+    return out
 
 
 def _remote(request: Request, spec: DeckSpec) -> None:
@@ -166,15 +192,8 @@ def plan(request: Request, spec: DeckSpec) -> list[dict[str, Any]]:
 
 @app.post("/v1/presentations", dependencies=DECKS)
 def create(request: Request, spec: DeckSpec, name: str | None = Query(None)) -> dict[str, Any]:
-    _check_output(spec)
-    _remote(request, spec)
-    try:
-        out = service.create(spec, name, allow_local_files=_allow_local(request))
-    except (TemplateError, SelectionError, PackError) as exc:
-        raise _bad(exc) from exc
+    out = _build(request, spec, name)
     if request.app.state.settings is not None:
-        user = request.scope.get("user")
-        service.audit_build(out, user.access_token if isinstance(user, AuthenticatedUser) else None)
         return service.public_result(out, request.app.state.settings)
     out.pop("path")
     out["diagrams"] = [f"/v1/presentations/{out['id']}/diagrams/{Path(d).name}" for d in out["diagrams"]]
@@ -189,15 +208,7 @@ def create_file(request: Request, spec: DeckSpec) -> Response:
     X-Deckwright-Warning-Count holds the number of warnings and X-Deckwright-Warnings the warnings
     as an ASCII JSON array. Use POST /v1/presentations for a JSON response instead.
     """
-    _check_output(spec)
-    _remote(request, spec)
-    try:
-        out = service.create(spec, allow_local_files=_allow_local(request))
-    except (TemplateError, SelectionError, PackError) as exc:
-        raise _bad(exc) from exc
-    if request.app.state.settings is not None:
-        user = request.scope.get("user")
-        service.audit_build(out, user.access_token if isinstance(user, AuthenticatedUser) else None)
+    out = _build(request, spec)
     headers = {
         "Content-Disposition": f'attachment; filename="{out["id"]}.pptx"',
         "X-Deckwright-Warning-Count": str(len(out["warnings"])),
@@ -207,8 +218,9 @@ def create_file(request: Request, spec: DeckSpec) -> Response:
 
 
 @app.get("/v1/presentations/{deck_id}.pptx", dependencies=DECKS)
-def download(deck_id: str) -> FileResponse:
+def download(request: Request, deck_id: str) -> FileResponse:
     try:
+        _check_owner(request, deck_id)
         path = service.deck_path(deck_id)
     except FileNotFoundError as exc:
         raise HTTPException(404, "presentation not found") from exc
@@ -216,10 +228,10 @@ def download(deck_id: str) -> FileResponse:
 
 
 @app.get("/v1/presentations/{deck_id}/diagrams/{name}", dependencies=DECKS)
-def diagram_file(deck_id: str, name: str) -> FileResponse:
+def diagram_file(request: Request, deck_id: str, name: str) -> FileResponse:
     """Editable .excalidraw source of a diagram in a deck."""
     try:
-        service.deck_path(deck_id)
+        _check_owner(request, deck_id)
     except FileNotFoundError as exc:
         raise HTTPException(404, "presentation not found") from exc
     path = service.OUTPUT_DIR / f"{deck_id}-diagrams" / Path(name).name
@@ -229,8 +241,9 @@ def diagram_file(deck_id: str, name: str) -> FileResponse:
 
 
 @app.get("/v1/presentations/{deck_id}/slides/{number}.png", dependencies=DECKS)
-def slide_png(deck_id: str, number: int) -> FileResponse:
+def slide_png(request: Request, deck_id: str, number: int) -> FileResponse:
     try:
+        _check_owner(request, deck_id)
         pngs = service.preview(deck_id, first=number, last=number)
     except FileNotFoundError as exc:
         raise HTTPException(404, "presentation not found") from exc

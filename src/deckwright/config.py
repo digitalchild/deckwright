@@ -16,6 +16,9 @@ from urllib.parse import urlparse
 log = logging.getLogger("deckwright")
 
 
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
 class ConfigError(RuntimeError):
     pass
 
@@ -104,7 +107,7 @@ class Settings:
                 raise ConfigError("auth needs DECKWRIGHT_PUBLIC_URL (the issuer and callback URL)")
             return
         url = urlparse(self.public_url)
-        local = url.hostname in ("localhost", "127.0.0.1")
+        local = url.hostname in LOOPBACK
         if url.scheme != "https" and not (url.scheme == "http" and local):
             raise ConfigError("DECKWRIGHT_PUBLIC_URL must use https:// (http:// only for localhost)")
         if url.path not in ("", "/") or url.query or url.fragment:
