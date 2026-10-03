@@ -297,6 +297,9 @@ def test_unknown_or_expired_state_at_callback_is_refused(output_dir, tmp_path):
 
 
 def test_refresh_rotates_and_old_token_is_refused_and_revokes_new(output_dir, tmp_path, monkeypatch):
+    import deckwright.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "REFRESH_GRACE", -1)  # the reuse comes after the grace window
     settings = _settings(tmp_path)
     provider = Provider(settings)
     app = server.build_app(settings, provider)
@@ -611,3 +614,16 @@ def test_narrower_refresh_keeps_the_full_grant_for_later(output_dir, tmp_path, m
         full = client.post("/token", data={"grant_type": "refresh_token", "refresh_token": narrow["refresh_token"],
                                            "client_id": client_id}).json()
         assert set(full["scope"].split()) == {"decks", "templates:read"}
+
+
+def test_refresh_retry_within_grace_keeps_the_session(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    _patch_google(monkeypatch)
+    with TestClient(app, base_url=BASE) as client:
+        client_id = _register(client)
+        tokens = _full_flow(client, client_id)
+        data = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "client_id": client_id}
+        new = client.post("/token", data=data).json()
+        assert client.post("/token", data=data).status_code == 400  # the retry is refused...
+        bearer = {"Authorization": f"Bearer {new['access_token']}"}
+        assert client.get("/v1/templates", headers=bearer).status_code == 200  # ...but the session lives on

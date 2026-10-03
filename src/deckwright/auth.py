@@ -56,6 +56,7 @@ PENDING_TTL = 600
 ACCESS_TTL = 3600
 REFRESH_TTL = 30 * 86400
 MAX_UNUSED_CLIENTS = 5000
+REFRESH_GRACE = 30  # seconds a rotated refresh token is refused without ending the session
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS clients (
@@ -393,7 +394,9 @@ class Provider:
         family, client_id, subject, email, scopes, expires, used = row
         if client_id != client.client_id or expires < time.time():
             return None
-        if used:  # a rotated refresh token came back: assume theft, end the whole session
+        if used and time.time() - used <= REFRESH_GRACE:  # a retry or a race: refuse it, keep the session
+            return None
+        if used:  # a rotated refresh token came back later: assume theft, end the whole session
             self._revoke_family(family)
             audit.info("refresh_reuse client_id=%s email=%s family_revoked=1", client_id, email)
             return None
@@ -407,8 +410,9 @@ class Provider:
         if set(granted) - set(refresh_token.scopes):
             raise TokenError("invalid_scope", "scope wider than the original grant")
         with self.store.lock:
-            marked = self.store.db.execute("UPDATE tokens SET used = 1 WHERE hash = ? AND kind = 'refresh' AND used = 0",
-                                           (token_hash(refresh_token.token),)).rowcount
+            marked = self.store.db.execute(  # used holds the rotation time, for the retry grace window
+                "UPDATE tokens SET used = ? WHERE hash = ? AND kind = 'refresh' AND used = 0",
+                (int(time.time()), token_hash(refresh_token.token))).rowcount
             if marked:  # only the request that won the rotation retires the old access tokens
                 self.store.db.execute("DELETE FROM tokens WHERE family = ? AND kind = 'access'", (family,))
         if not marked:

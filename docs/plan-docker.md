@@ -150,7 +150,7 @@ Secrets can also come from files (`DECKWRIGHT_SECRET_KEY_FILE`, `DECKWRIGHT_GOOG
 Every phase meets these rules before it is done.
 
 Auth and tokens:
-- OAuth 2.1 rules: PKCE (S256) required, exact redirect URI match, short-lived single-use authorization codes (10 minutes, and a reused code revokes the tokens it issued), refresh token rotation with reuse detection, and a fixed 30-day session from sign-in.
+- OAuth 2.1 rules: PKCE (S256) required, exact redirect URI match, short-lived single-use authorization codes (10 minutes, and a reused code revokes the tokens it issued), refresh token rotation with reuse detection (a repeat within 30 seconds is refused but treated as a client retry; a later repeat revokes the session), and a fixed 30-day session from sign-in.
 - Redirect URIs: https, or http on loopback only. No user info (`user@host`) or fragments.
 - Consent per app: registration is open, so after Google sign-in Deckwright shows a consent page that names the app and its redirect host. A code is issued only after the person selects Allow. The answer is bound to the browser with a `SameSite=Strict` cookie and remembered per person, app, redirect URI and scopes. A new destination or wider scopes ask again. This closes the confused-deputy issue that the MCP security best practices describe for proxies with dynamic client registration.
 - Opaque random tokens (`secrets.token_urlsafe(32)`). Stored as SHA-256 hashes. Compared with `hmac.compare_digest`.

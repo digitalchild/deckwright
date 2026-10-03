@@ -325,6 +325,8 @@ def test_public_url_default_port_is_dropped(monkeypatch):
     assert config.load().public_url == "https://decks.example.com"
     monkeypatch.setenv("DECKWRIGHT_PUBLIC_URL", "http://localhost:8765")
     assert config.load().public_url == "http://localhost:8765"
+    monkeypatch.setenv("DECKWRIGHT_PUBLIC_URL", "HTTPS://Decks.Example.com")
+    assert config.load().public_url == "https://decks.example.com"
 
 
 def test_bad_port_env_only_breaks_the_server_command(monkeypatch, capsys):

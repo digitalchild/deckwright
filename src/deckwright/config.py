@@ -131,7 +131,8 @@ class Settings:
 
 def _origin(url: str) -> str:
     """Drop a trailing slash and a default port, so the URL matches the Host header clients send."""
-    url = url.rstrip("/")
+    scheme, sep, rest = url.rstrip("/").partition("://")
+    url = f"{scheme.lower()}{sep}{rest.lower()}" if sep else url.rstrip("/")
     for scheme, port in (("https://", ":443"), ("http://", ":80")):
         if url.startswith(scheme) and url.endswith(port) and "/" not in url[len(scheme):]:
             return url[: -len(port)]
