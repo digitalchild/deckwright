@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import shutil
 import threading
+import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import brand, gslides, pack
 from .deck import build_deck, resolve_layouts
@@ -16,7 +19,11 @@ from .engine import TemplateError, template_layouts
 from .models import DeckSpec
 from .pack import PackError, Template
 from .render import to_pngs
+from .security import sign_file, subkey
 from .selector import explain
+
+if TYPE_CHECKING:
+    from .config import Settings
 
 OUTPUT_DIR = Path(os.environ.get("DECKWRIGHT_OUTPUT_DIR", "output")).expanduser().resolve()
 _ID = re.compile(r"^[a-z0-9-]{1,80}$")
@@ -78,7 +85,7 @@ def thumbnail(template: str | None, layout_id: str) -> Path | None:
 
 def _slug(name: str | None) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", (name or "deck").lower()).strip("-")[:40] or "deck"
-    return f"{base}-{uuid.uuid4().hex[:8]}"
+    return f"{base}-{uuid.uuid4().hex}"
 
 
 def _meta_path(path: Path) -> Path:
@@ -162,3 +169,71 @@ def preview(deck_id: str, first: int | None = None, last: int | None = None, dpi
     lo = max(1, first or 1)
     hi = min(len(pngs), last or len(pngs))
     return pngs[lo - 1 : hi]
+
+
+# --------------------------------------------------------------------------- remote server
+
+
+def audit_build(out: dict[str, Any], token: Any) -> None:
+    """One audit line per deck built on a remote server. No deck content."""
+    email = (getattr(token, "claims", None) or {}).get("email", "-")
+    logging.getLogger("deckwright.audit").info("deck_built id=%s slides=%d client_id=%s email=%s", out["id"],
+                                               len(out["slides"]), getattr(token, "client_id", "-"), email)
+
+
+def check_spec(spec: DeckSpec, settings: Settings) -> None:
+    """Limits for untrusted callers of a remote server."""
+    if len(spec.slides) > settings.max_slides:
+        raise ValueError(f"too many slides: {len(spec.slides)} (limit {settings.max_slides})")
+    if spec.output == "slides" and not settings.allow_slides:
+        raise ValueError("Google Slides output is disabled on this server; set DECKWRIGHT_ALLOW_SLIDES=1")
+
+
+def file_url(settings: Settings, deck_id: str, name: str) -> str:
+    """A signed, expiring download link for one output file."""
+    token = sign_file(subkey(settings.secret_key or "", "download"), deck_id, name, settings.download_ttl)
+    return f"{settings.public_url}/files/{token}"
+
+
+def public_result(out: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """A create() result for a remote caller: download links instead of server paths."""
+    out = dict(out)
+    out.pop("path", None)
+    out["download_url"] = file_url(settings, out["id"], f"{out['id']}.pptx")
+    out["diagrams"] = [file_url(settings, out["id"], Path(d).name) for d in out["diagrams"]]
+    out["download_expires_in"] = settings.download_ttl
+    return out
+
+
+def output_file(deck_id: str, name: str) -> Path | None:
+    """The deck or diagram file a signed link names, or None. Never a path outside OUTPUT_DIR."""
+    if not _ID.match(deck_id):
+        return None
+    if name == f"{deck_id}.pptx":
+        path = OUTPUT_DIR / name
+    elif re.fullmatch(r"[A-Za-z0-9._-]{1,120}\.excalidraw", name) and ".." not in name:
+        path = OUTPUT_DIR / f"{deck_id}-diagrams" / name
+    else:
+        return None
+    path = path.resolve()
+    if not path.is_relative_to(OUTPUT_DIR) or not path.is_file():
+        return None
+    return path
+
+
+def sweep_output(days: int) -> int:
+    """Delete decks, diagrams and previews older than days. Returns the number of decks removed."""
+    if days <= 0 or not OUTPUT_DIR.exists():
+        return 0
+    cutoff = time.time() - days * 86400
+    removed = 0
+    for deck in OUTPUT_DIR.glob("*.pptx"):
+        if deck.stat().st_mtime >= cutoff or not _ID.match(deck.stem):
+            continue
+        for extra in (OUTPUT_DIR / f"{deck.stem}-diagrams", OUTPUT_DIR / "previews" / deck.stem):
+            if extra.is_dir():
+                shutil.rmtree(extra, ignore_errors=True)
+        _meta_path(deck).unlink(missing_ok=True)
+        deck.unlink(missing_ok=True)
+        removed += 1
+    return removed

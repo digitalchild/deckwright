@@ -14,7 +14,7 @@ See [plan-open-source.md](plan-open-source.md). It replaces the old section 1 (t
 
 ## 2. Docker service
 
-See [plan-docker.md](plan-docker.md). Proposed: a self-hosted Docker image with a remote MCP server, built-in Google OAuth and signed download links.
+See [plan-docker.md](plan-docker.md). Implemented, pending merge and v0.2.0 release: a self-hosted Docker image with a remote MCP server, built-in Google OAuth and signed download links.
 
 ## 3. Smaller improvements (proposals, not requested yet)
 

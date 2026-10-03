@@ -1,0 +1,41 @@
+# Example deployment. Put TLS in front (see the Caddy example in README.md), then:
+#   mkdir -p secrets && openssl rand -hex 32 > secrets/secret_key
+#   printf '%s' 'your-google-client-secret' > secrets/google_client_secret
+#   docker compose up -d
+services:
+  deckwright:
+    image: ghcr.io/digitalchild/deckwright:latest
+    # build: .   # or build from this checkout
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"   # only the local reverse proxy can reach it
+    environment:
+      DECKWRIGHT_PUBLIC_URL: https://decks.example.com
+      DECKWRIGHT_GOOGLE_CLIENT_ID: your-client-id.apps.googleusercontent.com
+      DECKWRIGHT_AUTH_ALLOWED_DOMAINS: example.com
+      DECKWRIGHT_SECRET_KEY_FILE: /run/secrets/secret_key
+      DECKWRIGHT_GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
+      DECKWRIGHT_TRUSTED_PROXIES: 172.16.0.0/12   # the Docker network the proxy connects from
+    secrets:
+      - secret_key
+      - google_client_secret
+    volumes:
+      - deckwright-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 2g
+
+secrets:
+  secret_key:
+    file: ./secrets/secret_key
+  google_client_secret:
+    file: ./secrets/google_client_secret
+
+volumes:
+  deckwright-data:

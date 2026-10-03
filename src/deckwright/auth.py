@@ -1,0 +1,385 @@
+"""OAuth for the remote server. Deckwright is the OAuth server for Claude and API clients; Google signs
+people in behind it. Only verified accounts of the allowed Google Workspace domains get tokens.
+
+Nothing secret is stored in clear: tokens and codes are stored as SHA-256 hashes, and client secrets are
+derived from DECKWRIGHT_SECRET_KEY and a per-client salt, so the database alone holds no usable secret.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import hashlib
+import hmac
+import json
+import logging
+import secrets
+import sqlite3
+import threading
+import time
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+from mcp.server.auth.provider import (
+    AccessToken,
+    AuthorizationCode,
+    AuthorizationParams,
+    AuthorizeError,
+    RefreshToken,
+    RegistrationError,
+    TokenError,
+    construct_redirect_uri,
+)
+from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from starlette.requests import Request
+from starlette.responses import JSONResponse, RedirectResponse, Response
+
+from .config import Settings
+from .security import subkey, token_hash
+
+log = logging.getLogger("deckwright.auth")
+audit = logging.getLogger("deckwright.audit")
+
+SCOPES = ["decks", "templates:read"]
+CALLBACK_PATH = "/oauth/google/callback"
+GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
+GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
+CODE_TTL = 600
+PENDING_TTL = 600
+ACCESS_TTL = 3600
+REFRESH_TTL = 30 * 86400
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS clients (
+  client_id TEXT PRIMARY KEY, info TEXT NOT NULL, salt TEXT, kind TEXT NOT NULL, name TEXT, created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS pending (
+  state TEXT PRIMARY KEY, data TEXT NOT NULL, expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS codes (
+  code TEXT PRIMARY KEY, data TEXT NOT NULL, expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS tokens (
+  hash TEXT PRIMARY KEY, kind TEXT NOT NULL, family TEXT NOT NULL, client_id TEXT NOT NULL, subject TEXT NOT NULL,
+  email TEXT NOT NULL, scopes TEXT NOT NULL, expires INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS tokens_family ON tokens (family);
+CREATE INDEX IF NOT EXISTS tokens_client ON tokens (client_id);
+"""
+
+
+class GoogleError(Exception):
+    pass
+
+
+class Store:
+    """SQLite store. One connection behind a lock: the server runs as one process."""
+
+    def __init__(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.executescript(SCHEMA)
+        self.lock = threading.Lock()
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+
+    def run(self, sql: str, args: tuple = ()) -> list[tuple]:
+        with self.lock:
+            return self.db.execute(sql, args).fetchall()
+
+    def take(self, table: str, key: str) -> dict[str, Any] | None:
+        """Read and delete one row of a single-use table (pending, codes)."""
+        with self.lock:
+            row = self.db.execute(f"DELETE FROM {table} WHERE {'state' if table == 'pending' else 'code'} = ? "
+                                  "RETURNING data, expires", (key,)).fetchone()
+        if row is None or row[1] < time.time():
+            return None
+        return json.loads(row[0])
+
+    def sweep(self) -> None:
+        now = int(time.time())
+        with self.lock:
+            for table in ("pending", "codes", "tokens"):
+                self.db.execute(f"DELETE FROM {table} WHERE expires < ?", (now,))
+
+
+class Provider:
+    """Implements the MCP SDK's OAuthAuthorizationServerProvider protocol."""
+
+    def __init__(self, settings: Settings, store: Store | None = None):
+        assert settings.public_url and settings.secret_key and settings.google_client_id
+        self.s = settings
+        self.store = store or Store(settings.auth_db)
+        self.client_key = subkey(settings.secret_key, "client-secret")
+        self.callback_url = settings.public_url + CALLBACK_PATH
+
+    # ------------------------------------------------------------------ clients
+
+    def _secret(self, client_id: str, salt: str) -> str:
+        return hmac.new(self.client_key, f"{client_id}:{salt}".encode(), hashlib.sha256).hexdigest()
+
+    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        rows = self.store.run("SELECT info, salt FROM clients WHERE client_id = ?", (client_id,))
+        if not rows:
+            return None
+        info, salt = rows[0]
+        client = OAuthClientInformationFull.model_validate_json(info)
+        if salt:
+            client.client_secret = self._secret(client_id, salt)
+        return client
+
+    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        _check_redirect_uris([str(u) for u in client_info.redirect_uris or []])
+        self._save_client(client_info, "dcr", client_info.client_name)
+        audit.info("client_registered client_id=%s kind=dcr name=%r", client_info.client_id, client_info.client_name)
+
+    def _save_client(self, client: OAuthClientInformationFull, kind: str, name: str | None) -> None:
+        salt = None
+        if client.client_secret is not None:
+            salt = secrets.token_hex(16)
+            client.client_secret = self._secret(client.client_id, salt)  # the handler returns this object
+        stored = client.model_copy(update={"client_secret": None})
+        self.store.run("INSERT INTO clients VALUES (?, ?, ?, ?, ?, ?)",
+                       (client.client_id, stored.model_dump_json(), salt, kind, name, int(time.time())))
+
+    def add_client(self, name: str, redirect_uris: list[str], scopes: list[str],
+                   auth_method: str = "client_secret_post") -> tuple[str, str]:
+        """Register a confidential API client. Returns (client_id, client_secret); the secret is shown once."""
+        _check_redirect_uris(redirect_uris)
+        bad = set(scopes) - set(SCOPES)
+        if bad or not scopes:
+            raise ValueError(f"scopes must be some of {SCOPES}")
+        client = OAuthClientInformationFull(
+            client_id=secrets.token_urlsafe(16), client_secret="pending", client_id_issued_at=int(time.time()),
+            client_secret_expires_at=0, client_name=name, redirect_uris=redirect_uris, scope=" ".join(scopes),
+            grant_types=["authorization_code", "refresh_token"], response_types=["code"],
+            token_endpoint_auth_method=auth_method,
+        )
+        self._save_client(client, "admin", name)
+        audit.info("client_registered client_id=%s kind=admin name=%r", client.client_id, name)
+        return client.client_id, client.client_secret
+
+    def list_clients(self) -> list[dict[str, Any]]:
+        rows = self.store.run("SELECT client_id, kind, name, created, info FROM clients ORDER BY created")
+        return [{"client_id": c, "kind": k, "name": n, "created": t,
+                 "scopes": json.loads(i).get("scope"), "redirect_uris": json.loads(i).get("redirect_uris")}
+                for c, k, n, t, i in rows]
+
+    def revoke_client(self, client_id: str) -> bool:
+        with self.store.lock:
+            gone = self.store.db.execute("DELETE FROM clients WHERE client_id = ?", (client_id,)).rowcount
+            self.store.db.execute("DELETE FROM tokens WHERE client_id = ?", (client_id,))
+        audit.info("client_revoked client_id=%s found=%s", client_id, bool(gone))
+        return bool(gone)
+
+    # ------------------------------------------------------------------ authorize
+
+    async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
+        if params.resource and params.resource.rstrip("/") not in (self.s.mcp_url, self.s.public_url):
+            raise AuthorizeError("invalid_target", "unknown resource")
+        scopes = params.scopes or (client.scope.split() if client.scope else [])
+        if not scopes or set(scopes) - set(SCOPES):
+            raise AuthorizeError("invalid_scope", "unknown scope")
+        state, verifier, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(48), secrets.token_urlsafe(16)
+        data = {"client_id": client.client_id, "params": params.model_dump(mode="json"), "scopes": scopes,
+                "verifier": verifier, "nonce": nonce}
+        self.store.run("INSERT INTO pending VALUES (?, ?, ?)",
+                       (token_hash(state), json.dumps(data), int(time.time()) + PENDING_TTL))
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        query = {
+            "client_id": self.s.google_client_id, "redirect_uri": self.callback_url, "response_type": "code",
+            "scope": "openid email", "state": state, "nonce": nonce, "code_challenge": challenge,
+            "code_challenge_method": "S256", "prompt": "select_account",
+        }
+        if len(self.s.allowed_domains) == 1:
+            query["hd"] = self.s.allowed_domains[0]  # a hint for Google's account picker; the callback enforces it
+        return f"{GOOGLE_AUTH}?{urllib.parse.urlencode(query)}"
+
+    async def callback(self, request: Request) -> Response:
+        """Google returns here. Check the account, then send the user back to the client with our own code."""
+        state = request.query_params.get("state", "")
+        pending = self.store.take("pending", token_hash(state)) if state else None
+        if pending is None:
+            return JSONResponse({"detail": "sign-in expired or invalid; start again from your client"}, 400)
+        params = AuthorizationParams.model_validate(pending["params"])
+
+        def back(**kw: str) -> RedirectResponse:
+            url = construct_redirect_uri(str(params.redirect_uri), state=params.state, **kw)
+            return RedirectResponse(url, 302, headers={"Cache-Control": "no-store"})
+
+        if request.query_params.get("error") or not request.query_params.get("code"):
+            audit.info("sign_in result=denied client_id=%s", pending["client_id"])
+            return back(error="access_denied", error_description="sign-in was cancelled")
+        try:
+            claims = await asyncio.to_thread(self._google_claims, request.query_params["code"], pending)
+        except GoogleError as exc:
+            audit.info("sign_in result=refused client_id=%s reason=%s", pending["client_id"], exc)
+            return back(error="access_denied", error_description="this account is not allowed")
+        code = secrets.token_urlsafe(32)
+        record = {"client_id": pending["client_id"], "scopes": pending["scopes"], "subject": claims["sub"],
+                  "email": claims["email"], "code_challenge": params.code_challenge,
+                  "redirect_uri": str(params.redirect_uri),
+                  "redirect_uri_provided_explicitly": params.redirect_uri_provided_explicitly,
+                  "expires_at": time.time() + CODE_TTL}
+        self.store.run("INSERT INTO codes VALUES (?, ?, ?)",
+                       (token_hash(code), json.dumps(record), int(time.time()) + CODE_TTL))
+        audit.info("sign_in result=ok client_id=%s email=%s", pending["client_id"], claims["email"])
+        return back(code=code)
+
+    def _google_claims(self, code: str, pending: dict[str, Any]) -> dict[str, Any]:
+        body = urllib.parse.urlencode({
+            "code": code, "client_id": self.s.google_client_id, "client_secret": self.s.google_client_secret,
+            "redirect_uri": self.callback_url, "grant_type": "authorization_code", "code_verifier": pending["verifier"],
+        }).encode()
+        req = urllib.request.Request(GOOGLE_TOKEN, data=body, method="POST",
+                                     headers={"Content-Type": "application/x-www-form-urlencoded"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                id_token = json.loads(resp.read(65536))["id_token"]
+        except Exception as exc:  # network, HTTP error or bad JSON: never leak details to the client
+            log.warning("google token exchange failed: %s", type(exc).__name__)
+            raise GoogleError("token exchange failed") from exc
+        return check_id_token(id_token, self.s.google_client_id, pending["nonce"], self.s.allowed_domains)
+
+    # ------------------------------------------------------------------ tokens
+
+    async def load_authorization_code(self, client: OAuthClientInformationFull, authorization_code: str
+                                      ) -> AuthorizationCode | None:
+        rows = self.store.run("SELECT data, expires FROM codes WHERE code = ?", (token_hash(authorization_code),))
+        if not rows:
+            return None
+        data = json.loads(rows[0][0])
+        if data["client_id"] != client.client_id:
+            return None
+        return _Code(code=authorization_code, scopes=data["scopes"], expires_at=data["expires_at"],
+                     client_id=data["client_id"], code_challenge=data["code_challenge"],
+                     redirect_uri=data["redirect_uri"],
+                     redirect_uri_provided_explicitly=data["redirect_uri_provided_explicitly"],
+                     resource=self.s.mcp_url, subject=data["subject"], email=data["email"])
+
+    async def exchange_authorization_code(self, client: OAuthClientInformationFull,
+                                          authorization_code: AuthorizationCode) -> OAuthToken:
+        if self.store.take("codes", token_hash(authorization_code.code)) is None:
+            raise TokenError("invalid_grant", "authorization code already used or expired")
+        email = getattr(authorization_code, "email", "")
+        return self._issue(client.client_id, authorization_code.subject or "", email, authorization_code.scopes,
+                           family=secrets.token_hex(16))
+
+    def _issue(self, client_id: str, subject: str, email: str, scopes: list[str], family: str) -> OAuthToken:
+        access, refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        now = int(time.time())
+        with self.store.lock:
+            for tok, kind, ttl in ((access, "access", ACCESS_TTL), (refresh, "refresh", REFRESH_TTL)):
+                self.store.db.execute(
+                    "INSERT INTO tokens (hash, kind, family, client_id, subject, email, scopes, expires) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (token_hash(tok), kind, family, client_id, subject, email, " ".join(scopes), now + ttl))
+        return OAuthToken(access_token=access, token_type="Bearer", expires_in=ACCESS_TTL, refresh_token=refresh,
+                          scope=" ".join(scopes))
+
+    def _token_row(self, token: str, kind: str) -> tuple | None:
+        rows = self.store.run("SELECT family, client_id, subject, email, scopes, expires, used FROM tokens "
+                              "WHERE hash = ? AND kind = ?", (token_hash(token), kind))
+        return rows[0] if rows else None
+
+    async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
+        row = self._token_row(refresh_token, "refresh")
+        if row is None:
+            return None
+        family, client_id, subject, email, scopes, expires, used = row
+        if client_id != client.client_id or expires < time.time():
+            return None
+        if used:  # a rotated refresh token came back: assume theft, end the whole session
+            self._revoke_family(family)
+            audit.info("refresh_reuse client_id=%s email=%s family_revoked=1", client_id, email)
+            return None
+        return _Refresh(token=refresh_token, client_id=client_id, scopes=scopes.split(), expires_at=expires,
+                        resource=self.s.mcp_url, subject=subject, email=email, family=family)
+
+    async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token: RefreshToken,
+                                     scopes: list[str]) -> OAuthToken:
+        family = getattr(refresh_token, "family", "")
+        granted = scopes or refresh_token.scopes
+        if set(granted) - set(refresh_token.scopes):
+            raise TokenError("invalid_scope", "scope wider than the original grant")
+        with self.store.lock:
+            marked = self.store.db.execute("UPDATE tokens SET used = 1 WHERE hash = ? AND kind = 'refresh' AND used = 0",
+                                           (token_hash(refresh_token.token),)).rowcount
+            self.store.db.execute("DELETE FROM tokens WHERE family = ? AND kind = 'access'", (family,))
+        if not marked:
+            raise TokenError("invalid_grant", "refresh token already used")
+        return self._issue(client.client_id, refresh_token.subject or "", getattr(refresh_token, "email", ""),
+                           granted, family)
+
+    async def load_access_token(self, token: str) -> AccessToken | None:
+        row = self._token_row(token, "access")
+        if row is None:
+            return None
+        family, client_id, subject, email, scopes, expires, _ = row
+        if expires < time.time():
+            return None
+        return AccessToken(token=token, client_id=client_id, scopes=scopes.split(), expires_at=expires,
+                           resource=self.s.mcp_url, subject=subject,
+                           claims={"iss": self.s.public_url, "email": email})
+
+    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+        rows = self.store.run("SELECT family FROM tokens WHERE hash = ?", (token_hash(token.token),))
+        if rows:
+            self._revoke_family(rows[0][0])
+
+    def _revoke_family(self, family: str) -> None:
+        self.store.run("DELETE FROM tokens WHERE family = ?", (family,))
+
+
+class _Code(AuthorizationCode):
+    email: str = ""
+
+
+class _Refresh(RefreshToken):
+    email: str = ""
+    family: str = ""
+
+
+def _check_redirect_uris(uris: list[str]) -> None:
+    """Only https, or http on a loopback address (native apps, RFC 8252)."""
+    if not uris:
+        raise RegistrationError("invalid_redirect_uri", "at least one redirect_uri is required")
+    for uri in uris:
+        u = urllib.parse.urlparse(uri)
+        loopback = u.scheme == "http" and u.hostname in ("localhost", "127.0.0.1", "::1")
+        if not (u.scheme == "https" or loopback) or u.fragment or not u.hostname:
+            raise RegistrationError("invalid_redirect_uri", f"redirect_uri must be https or loopback http: {uri}")
+
+
+def _unb64(part: str) -> bytes:
+    return base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
+
+
+def check_id_token(id_token: str, client_id: str, nonce: str, domains: tuple[str, ...],
+                   now: float | None = None) -> dict[str, Any]:
+    """Validate a Google ID token received straight from Google's token endpoint over TLS.
+
+    OpenID Connect Core 3.1.3.7 allows TLS server validation in place of the signature check for a
+    token received this way. All claims are still checked.
+    """
+    try:
+        claims = json.loads(_unb64(id_token.split(".")[1]))
+    except (IndexError, ValueError) as exc:
+        raise GoogleError("malformed id_token") from exc
+    now = time.time() if now is None else now
+    if claims.get("iss") not in GOOGLE_ISSUERS:
+        raise GoogleError("wrong issuer")
+    aud = claims.get("aud")
+    if aud != client_id and not (isinstance(aud, list) and client_id in aud):
+        raise GoogleError("wrong audience")
+    if not isinstance(claims.get("exp"), int | float) or claims["exp"] < now:
+        raise GoogleError("expired")
+    if not hmac.compare_digest(str(claims.get("nonce", "")), nonce):
+        raise GoogleError("wrong nonce")
+    if claims.get("email_verified") is not True or not claims.get("email") or not claims.get("sub"):
+        raise GoogleError("email not verified")
+    if str(claims.get("hd", "")).lower() not in domains:
+        raise GoogleError("domain not allowed")
+    return claims

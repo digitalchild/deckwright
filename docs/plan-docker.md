@@ -1,6 +1,6 @@
 # Plan: Deckwright as a self-hosted Docker service
 
-Status: proposed, 2026-10-03. Not started.
+Status: implemented on branch feat/docker-service, 2026-10-03. Release v0.2.0 pending merge.
 
 ## Goal
 
@@ -133,7 +133,7 @@ Or does the review on a laptop, then copies the pack folder into the volume. Bot
 | `DECKWRIGHT_GOOGLE_CLIENT_SECRET` | for auth | Secret for that client. |
 | `DECKWRIGHT_AUTH_ALLOWED_DOMAINS` | for auth | Comma-separated Google Workspace domains, for example `example.com`. Auth refuses to start without it. |
 | `DECKWRIGHT_DOWNLOAD_TTL` | no | Download link lifetime in seconds. Default `86400`. |
-| `DECKWRIGHT_TEMPLATES`, `DECKWRIGHT_OUTPUT_DIR` | no | Set by the image to `/data/templates` and `/data/output`. |
+| `DECKWRIGHT_TEMPLATES`, `DECKWRIGHT_OUTPUT_DIR` | no | The image sets `XDG_CONFIG_HOME=/data` (packs live in `/data/deckwright/templates`) and `DECKWRIGHT_OUTPUT_DIR=/data/output`. |
 | `DECKWRIGHT_API_DOCS` | no | `1` serves the OpenAPI docs in remote mode, behind auth. |
 | `DECKWRIGHT_INSECURE_NO_AUTH` | no | `1` lets remote mode start without auth. For teams that put their own SSO proxy in front. Logs a warning on every start. |
 

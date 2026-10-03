@@ -1,0 +1,386 @@
+"""Tests for deckwright.auth: Google ID token checks and the full OAuth flow against a fake Google.
+
+Uses asyncio.run inside plain test functions, no pytest-asyncio plugin. Network calls to Google are
+never made: the token exchange is faked by monkeypatching Provider._google_claims, which still runs
+the real check_id_token so claim validation stays authentic.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import secrets
+import sqlite3
+import time
+from urllib.parse import parse_qs, urlparse
+
+import pytest
+from starlette.testclient import TestClient
+
+from deckwright import config, server
+from deckwright.auth import GoogleError, Provider, check_id_token
+
+REDIRECT = "https://claude.ai/api/mcp/auth_callback"
+
+
+@pytest.fixture(autouse=True)
+def _reset_api_state():
+    """build_app() mutates the shared deckwright.api singleton; put it back so test_api.py
+    keeps working regardless of test order."""
+    yield
+    from deckwright import api
+
+    api.app.state.auth = None
+    api.app.state.settings = None
+
+
+def _settings(tmp_path):
+    s = config.Settings(
+        public_url="https://decks.example.com",
+        secret_key="x" * 40,
+        google_client_id="gid",
+        google_client_secret="gsec",
+        allowed_domains=("example.com",),
+        data_dir=tmp_path,
+    )
+    s.check()
+    return s
+
+
+def _b64(obj: dict) -> str:
+    return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
+
+
+def _fake_id_token(claims: dict) -> str:
+    return "header." + _b64(claims) + ".sig"
+
+
+def _good_claims(**over) -> dict:
+    base = {
+        "iss": "https://accounts.google.com", "aud": "gid", "sub": "user-1", "email": "person@example.com",
+        "email_verified": True, "hd": "example.com", "exp": time.time() + 300, "nonce": "n1",
+    }
+    base.update(over)
+    return base
+
+
+def _patch_google(monkeypatch, **claim_overrides) -> None:
+    """Make Provider._google_claims return allowed_or_overridden claims, through the real
+    check_id_token so claim validation still runs."""
+
+    def fake(self, code, pending):
+        claims = _good_claims(nonce=pending["nonce"], **claim_overrides)
+        return check_id_token(_fake_id_token(claims), self.s.google_client_id, pending["nonce"], self.s.allowed_domains)
+
+    monkeypatch.setattr(Provider, "_google_claims", fake)
+
+
+def _pkce() -> tuple[str, str]:
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    return verifier, challenge
+
+
+def _register(client, redirect_uris=(REDIRECT,), auth_method="none") -> str:
+    resp = client.post(
+        "/register",
+        json={
+            "redirect_uris": list(redirect_uris),
+            "token_endpoint_auth_method": auth_method,
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "client_name": "Claude",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["client_id"]
+
+
+def _authorize(client, client_id, challenge, state="client-state", redirect_uri=REDIRECT):
+    resp = client.get(
+        "/authorize",
+        params={
+            "client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code",
+            "code_challenge": challenge, "code_challenge_method": "S256", "state": state,
+            "resource": "https://decks.example.com/mcp",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302, resp.text
+    return parse_qs(urlparse(resp.headers["location"]).query)["state"][0]
+
+
+def _callback(client, google_state, code="gcode"):
+    return client.get("/oauth/google/callback", params={"code": code, "state": google_state}, follow_redirects=False)
+
+
+def _full_flow(client, client_id, client_secret=None, redirect_uri=REDIRECT) -> dict:
+    verifier, challenge = _pkce()
+    google_state = _authorize(client, client_id, challenge, redirect_uri=redirect_uri)
+    resp = _callback(client, google_state)
+    code = parse_qs(urlparse(resp.headers["location"]).query)["code"][0]
+    data = {
+        "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
+        "client_id": client_id, "code_verifier": verifier, "resource": "https://decks.example.com/mcp",
+    }
+    if client_secret:
+        data["client_secret"] = client_secret
+    resp = client.post("/token", data=data)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+# --------------------------------------------------------------------------- check_id_token
+
+
+def test_check_id_token_accepts_good_claims():
+    claims = _good_claims()
+    out = check_id_token(_fake_id_token(claims), "gid", "n1", ("example.com",))
+    assert out["email"] == "person@example.com"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"iss": "https://evil.example.com"},
+        {"aud": "someone-else"},
+        {"exp": time.time() - 10},
+        {"nonce": "wrong-nonce"},
+        {"email_verified": False},
+        {"hd": "other.com"},
+    ],
+)
+def test_check_id_token_refuses_bad_claims(override):
+    claims = _good_claims(**override)
+    with pytest.raises(GoogleError):
+        check_id_token(_fake_id_token(claims), "gid", "n1", ("example.com",))
+
+
+def test_check_id_token_refuses_missing_hd():
+    claims = _good_claims()
+    del claims["hd"]
+    with pytest.raises(GoogleError):
+        check_id_token(_fake_id_token(claims), "gid", "n1", ("example.com",))
+
+
+# --------------------------------------------------------------------------- full flow
+
+
+def test_full_oauth_flow_issues_working_tokens(output_dir, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    provider = Provider(settings)
+    app = server.build_app(settings, provider)
+    _patch_google(monkeypatch)
+
+    with TestClient(app, base_url="https://decks.example.com") as client:
+        client_id = _register(client)
+        tokens = _full_flow(client, client_id)
+        assert tokens["access_token"]
+        assert tokens["refresh_token"]
+
+        resp = client.get("/v1/templates", headers={"Authorization": f"Bearer {tokens['access_token']}"})
+        assert resp.status_code == 200
+
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            headers={
+                "accept": "application/json, text/event-stream",
+                "Authorization": f"Bearer {tokens['access_token']}",
+            },
+        )
+        assert resp.status_code != 401
+
+
+# --------------------------------------------------------------------------- refusals
+
+
+def test_callback_denies_other_domain_with_no_code(output_dir, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    provider = Provider(settings)
+    app = server.build_app(settings, provider)
+    _patch_google(monkeypatch, hd="other.com", email="a@other.com")
+
+    with TestClient(app, base_url="https://decks.example.com") as client:
+        client_id = _register(client)
+        _, challenge = _pkce()
+        google_state = _authorize(client, client_id, challenge)
+        resp = _callback(client, google_state)
+        assert resp.status_code == 302
+        qs = parse_qs(urlparse(resp.headers["location"]).query)
+        assert qs["error"] == ["access_denied"]
+        assert "code" not in qs
+
+
+def test_reused_authorization_code_is_refused(output_dir, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    provider = Provider(settings)
+    app = server.build_app(settings, provider)
+    _patch_google(monkeypatch)
+
+    with TestClient(app, base_url="https://decks.example.com") as client:
+        client_id = _register(client)
+        verifier, challenge = _pkce()
+        google_state = _authorize(client, client_id, challenge)
+        resp = _callback(client, google_state)
+        code = parse_qs(urlparse(resp.headers["location"]).query)["code"][0]
+        data = {
+            "grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT,
+            "client_id": client_id, "code_verifier": verifier,
+        }
+        first = client.post("/token", data=data)
+        assert first.status_code == 200
+        second = client.post("/token", data=data)
+        assert second.status_code == 400
+        assert second.json()["error"] == "invalid_grant"
+
+
+def test_wrong_code_verifier_is_refused(output_dir, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    provider = Provider(settings)
+    app = server.build_app(settings, provider)
+    _patch_google(monkeypatch)
+
+    with TestClient(app, base_url="https://decks.example.com") as client:
+        client_id = _register(client)
+        _, challenge = _pkce()
+        google_state = _authorize(client, client_id, challenge)
+        resp = _callback(client, google_state)
+        code = parse_qs(urlparse(resp.headers["location"]).query)["code"][0]
+        resp = client.post(
+            "/token",
+            data={
+                "grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT,
+                "client_id": client_id, "code_verifier": "totally-wrong-verifier",
+            },
+        )
+        assert resp.status_code == 400
+
+
+def test_wrong_redirect_uri_at_token_is_refused(output_dir, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    provider = Provider(settings)
+    app = server.build_app(settings, provider)
+    _patch_google(monkeypatch)
+
+    with TestClient(app, base_url="https://decks.example.com") as client:
+        client_id = _register(client)
+        verifier, challenge = _pkce()
+        google_state = _authorize(client, client_id, challenge)
+        resp = _callback(client, google_state)
+        code = parse_qs(urlparse(resp.headers["location"]).query)["code"][0]
+        resp = client.post(
+            "/token",
+            data={
+                "grant_type": "authorization_code", "code": code,
+                "redirect_uri": "https://attacker.example.com/cb",
+                "client_id": client_id, "code_verifier": verifier,
+            },
+        )
+        assert resp.status_code == 400
+
+
+def test_unknown_or_expired_state_at_callback_is_refused(output_dir, tmp_path):
+    settings = _settings(tmp_path)
+    provider = Provider(settings)
+    app = server.build_app(settings, provider)
+
+    with TestClient(app, base_url="https://decks.example.com") as client:
+        resp = _callback(client, "no-such-state")
+        assert resp.status_code == 400
+
+
+# --------------------------------------------------------------------------- refresh rotation
+
+
+def test_refresh_rotates_and_old_token_is_refused_and_revokes_new(output_dir, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    provider = Provider(settings)
+    app = server.build_app(settings, provider)
+    _patch_google(monkeypatch)
+
+    with TestClient(app, base_url="https://decks.example.com") as client:
+        client_id = _register(client)
+        tokens = _full_flow(client, client_id)
+        old_refresh = tokens["refresh_token"]
+
+        first = client.post("/token", data={"grant_type": "refresh_token", "refresh_token": old_refresh,
+                                             "client_id": client_id})
+        assert first.status_code == 200
+        new_tokens = first.json()
+        assert new_tokens["refresh_token"] != old_refresh
+
+        reuse = client.post("/token", data={"grant_type": "refresh_token", "refresh_token": old_refresh,
+                                            "client_id": client_id})
+        assert reuse.status_code == 400
+
+        resp = client.get("/v1/templates", headers={"Authorization": f"Bearer {new_tokens['access_token']}"})
+        assert resp.status_code == 401
+
+
+# --------------------------------------------------------------------------- scopes
+
+
+def test_admin_client_with_read_only_scope_cannot_write(output_dir, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    provider = Provider(settings)
+    app = server.build_app(settings, provider)
+    _patch_google(monkeypatch)
+
+    admin_redirect = "https://admin.example.com/cb"
+    client_id, client_secret = provider.add_client("admin-tool", [admin_redirect], ["templates:read"],
+                                                    auth_method="client_secret_post")
+
+    with TestClient(app, base_url="https://decks.example.com") as client:
+        tokens = _full_flow(client, client_id, client_secret, redirect_uri=admin_redirect)
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+        assert client.get("/v1/templates", headers=headers).status_code == 200
+        assert client.post("/v1/plan", json={"slides": [{"layout": "closing"}]}, headers=headers).status_code == 403
+
+
+# --------------------------------------------------------------------------- revoke_client
+
+
+def test_revoke_client_invalidates_its_tokens(output_dir, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    provider = Provider(settings)
+    app = server.build_app(settings, provider)
+    _patch_google(monkeypatch)
+
+    with TestClient(app, base_url="https://decks.example.com") as client:
+        client_id = _register(client)
+        tokens = _full_flow(client, client_id)
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+        assert client.get("/v1/templates", headers=headers).status_code == 200
+
+        assert provider.revoke_client(client_id) is True
+
+        assert client.get("/v1/templates", headers=headers).status_code == 401
+
+
+# --------------------------------------------------------------------------- the database holds no secrets
+
+
+def test_database_holds_no_secrets(output_dir, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    provider = Provider(settings)
+    app = server.build_app(settings, provider)
+    _patch_google(monkeypatch)
+
+    admin_redirect = "https://admin.example.com/cb"
+    admin_id, admin_secret = provider.add_client("admin-tool", [admin_redirect], ["templates:read"],
+                                                  auth_method="client_secret_post")
+
+    with TestClient(app, base_url="https://decks.example.com") as client:
+        client_id = _register(client)
+        tokens = _full_flow(client, client_id)
+        admin_tokens = _full_flow(client, admin_id, admin_secret, redirect_uri=admin_redirect)
+
+    conn = sqlite3.connect(settings.auth_db)
+    dump = "\n".join(conn.iterdump())
+    conn.close()
+
+    for secret in (tokens["access_token"], tokens["refresh_token"], admin_tokens["access_token"],
+                   admin_tokens["refresh_token"], admin_secret):
+        assert secret not in dump

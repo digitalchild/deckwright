@@ -149,7 +149,11 @@ See [docs/kinds.md](docs/kinds.md) for the full kind contract: the standard fiel
 | `deckwright template inspect <id>` | Print the raw master layouts (placeholder idx and position) |
 | `deckwright serve [--host] [--port]` | Run the HTTP API |
 | `deckwright mcp [--http] [--host] [--port]` | Run the MCP server (stdio by default) |
+| `deckwright server [--host] [--port]` | Run the MCP server and the HTTP API together, on one port (remote use, see [Run with Docker](#run-with-docker)) |
 | `deckwright auth google [--client-secrets <file.json>]` | Sign in to Google, for Slides output |
+| `deckwright auth client add --name <n> --redirect-uri <url> --scope <decks\|templates:read>` | Register an OAuth API client for the remote server; prints its secret once |
+| `deckwright auth client list` | List registered API clients |
+| `deckwright auth client revoke <client-id>` | Delete an API client and all its tokens |
 
 ## HTTP API
 
@@ -221,6 +225,131 @@ Tools:
 
 Resources: `deckwright://templates`, `deckwright://templates/{template}/layouts`, `deckwright://templates/{template}/brand`. The server instructions tell the agent the recommended workflow for both building a deck and adding a template.
 
+For remote use, with Google sign-in and a public URL, see [Run with Docker](#run-with-docker).
+
+## Run with Docker
+
+Deckwright publishes a Docker image so a team can run one shared server. Claude (desktop or claude.ai) connects to it over the network, signs in with Google, and builds decks with no local install.
+
+### Quick local try
+
+This runs the full server on your own machine, with auth off. Bind it to `127.0.0.1` only, and never use this setup for a server other people can reach.
+
+```bash
+docker run --rm -p 127.0.0.1:8765:8765 -e DECKWRIGHT_INSECURE_NO_AUTH=1 \
+  ghcr.io/digitalchild/deckwright deckwright server --host 0.0.0.0
+```
+
+**Warning: this is for a laptop only.** `DECKWRIGHT_INSECURE_NO_AUTH=1` turns off sign-in. Anyone who can reach the port can use the server. Only run it this way behind the loopback address, on a machine you control.
+
+Add the connector in Claude at `http://127.0.0.1:8765/mcp`. See [docs/connect-claude.md](docs/connect-claude.md) for the connector steps.
+
+Without `DECKWRIGHT_INSECURE_NO_AUTH=1`, the server refuses to listen on a non-loopback host unless remote mode and auth are on. This stops an open server from shipping by accident.
+
+### Production, with docker-compose.yml
+
+The repo ships a [docker-compose.yml](docker-compose.yml) example. It binds the server to `127.0.0.1` only, and expects a TLS reverse proxy in front of it.
+
+```bash
+mkdir -p secrets
+openssl rand -hex 32 > secrets/secret_key
+printf '%s' 'your-google-client-secret' > secrets/google_client_secret
+docker compose up -d
+```
+
+Set `DECKWRIGHT_PUBLIC_URL`, `DECKWRIGHT_GOOGLE_CLIENT_ID` and `DECKWRIGHT_AUTH_ALLOWED_DOMAINS` in the `environment:` block of `docker-compose.yml` before you start it. The secrets (`DECKWRIGHT_SECRET_KEY`, `DECKWRIGHT_GOOGLE_CLIENT_SECRET`) come from files, not plain env vars.
+
+Rotating `DECKWRIGHT_SECRET_KEY` invalidates every client secret and every download link already issued. Treat it like any other credential: keep it safe, and only rotate it when you must.
+
+### Set up the Google OAuth client
+
+1. In Google Cloud Console, create an OAuth 2.0 client of type **Web application**.
+2. Add an authorized redirect URI: `https://<public host>/oauth/google/callback` (for example `https://decks.example.com/oauth/google/callback`).
+3. Copy the client ID into `DECKWRIGHT_GOOGLE_CLIENT_ID`.
+4. Copy the client secret into the `secrets/google_client_secret` file (or `DECKWRIGHT_GOOGLE_CLIENT_SECRET`).
+5. Set `DECKWRIGHT_AUTH_ALLOWED_DOMAINS` to your Google Workspace domain or domains, comma-separated.
+
+Only accounts with a verified `hd` claim that matches one of these domains can sign in.
+
+### Put TLS in front
+
+Deckwright does not terminate TLS itself. Put a reverse proxy in front of it. A short [Caddy](https://caddyserver.com) example:
+
+```
+decks.example.com {
+	reverse_proxy 127.0.0.1:8765
+}
+```
+
+Caddy gets a certificate for you and forwards everything else to the container.
+
+### Add the Claude connector
+
+Once the server is up behind TLS, the connector URL is:
+
+```
+https://<public host>/mcp
+```
+
+Give this URL to anyone who should use Deckwright. See [docs/connect-claude.md](docs/connect-claude.md) for the steps a non-technical user follows.
+
+### Template admin
+
+Template packs are managed by an engineer, inside the container. They are never added by a remote user.
+
+```bash
+docker cp company.pptx deckwright:/tmp/company.pptx
+docker exec deckwright deckwright template add /tmp/company.pptx --id acme
+docker exec deckwright deckwright template review acme
+docker exec deckwright deckwright template confirm acme
+```
+
+In the example `docker-compose.yml`, `/tmp` inside the container is a tmpfs (it does not persist), and `/data` is the real volume. The pack ends up under `/data/deckwright/templates/acme/` once confirmed.
+
+### Register an API client
+
+Other tools (for example an n8n workflow) can call the HTTP API as their own OAuth client, instead of sharing a user's sign-in.
+
+```bash
+docker exec deckwright deckwright auth client add --name n8n-workflows \
+  --redirect-uri https://n8n.example.com/rest/oauth2-credential/callback \
+  --scope decks --scope templates:read
+```
+
+This prints `client_id`, `client_secret` (shown once, store it now), `authorization_url` and `token_url`. The client signs in with the authorization code flow and PKCE (S256), the same as Claude does. Manage clients with:
+
+```bash
+docker exec deckwright deckwright auth client list
+docker exec deckwright deckwright auth client revoke <client-id>
+```
+
+Scopes: `decks` lets a client build, plan, suggest, download and preview decks. `templates:read` lets a client read brand, layouts, templates and thumbnails.
+
+### Downloads
+
+`create_presentation` (MCP) and `POST /v1/presentations` (API, remote mode) return a `download_url` instead of a server file path. The link looks like `https://<host>/files/<token>`. It opens in a browser with no sign-in needed, and expires after `DECKWRIGHT_DOWNLOAD_TTL` seconds (default 86400, one day).
+
+Remote mode also hides the template admin MCP tools (`add_template`, `review_template`, `update_pack`, `confirm_template`, `update_template`). Use the CLI inside the container for those, as shown above.
+
+### Back up /data
+
+Everything Deckwright needs to keep lives in the `/data` volume. Back it up, in particular:
+
+- `/data/deckwright/templates`: your template packs. These can also be rebuilt from their source `.pptx` files if lost.
+- `/data/auth.db`: registered API clients and sign-in tokens. Losing this signs everyone out and removes registered API clients. It does not lose any deck content.
+
+### Verify the image signature
+
+Published images are signed with [cosign](https://github.com/sigstore/cosign), keyless, through GitHub OIDC. Verify an image before you run it:
+
+```bash
+cosign verify ghcr.io/digitalchild/deckwright:latest \
+  --certificate-identity-regexp 'https://github.com/digitalchild/deckwright/.github/workflows/docker.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Images are published for `linux/amd64` and `linux/arm64`, tagged with the full version (for example `0.2.0`), the major.minor (`0.2`), and `latest`.
+
 ## Google Slides output (experimental)
 
 Deckwright can also upload the built deck to Google Drive as Google Slides. This feature is experimental. It has not been tested against a live Google account yet.
@@ -274,6 +403,21 @@ print(result.warnings)
 | `XDG_CONFIG_HOME` | `~/.config` | Base folder for `deckwright/templates/`, the installed template packs |
 | `DECKWRIGHT_GOOGLE_CLIENT_SECRETS` | unset | Path to the OAuth client secrets JSON, used by `deckwright auth google` when `--client-secrets` is not given |
 | `DECKWRIGHT_ALLOW_SLIDES` | unset | `1` lets HTTP API requests upload decks to this server's Google Drive |
+| `DECKWRIGHT_PUBLIC_URL` | unset | Public HTTPS base URL. Turns on remote mode (`deckwright server`). Used as the OAuth issuer and for download links |
+| `DECKWRIGHT_SECRET_KEY` | unset | Signs download links and client secrets. Required in remote mode, at least 32 characters (`openssl rand -hex 32`). Rotating it invalidates every client secret and download link |
+| `DECKWRIGHT_GOOGLE_CLIENT_ID` | unset | Google OAuth client (type "Web application"). Setting it turns auth on |
+| `DECKWRIGHT_GOOGLE_CLIENT_SECRET` | unset | Secret for that client |
+| `DECKWRIGHT_AUTH_ALLOWED_DOMAINS` | unset | Comma-separated Google Workspace domains, for example `example.com`. Auth refuses to start without it |
+| `DECKWRIGHT_DOWNLOAD_TTL` | `86400` | Download link lifetime, in seconds |
+| `DECKWRIGHT_RETENTION_DAYS` | `7` | Built decks older than this are deleted |
+| `DECKWRIGHT_MAX_BODY_BYTES` | `5242880` (5 MB) | Request body size limit on the remote server |
+| `DECKWRIGHT_MAX_SLIDES` | `100` | Slide count limit on a deck spec, on the remote server |
+| `DECKWRIGHT_DATA_DIR` | `/data` | Base folder for `auth.db`, set by the image |
+| `DECKWRIGHT_TRUSTED_PROXIES` | unset | Comma-separated IP addresses or networks allowed to set `X-Forwarded-For` (your reverse proxy) |
+| `DECKWRIGHT_API_DOCS` | unset | `1` serves the OpenAPI docs in remote mode, still behind auth |
+| `DECKWRIGHT_INSECURE_NO_AUTH` | unset | `1` lets remote mode start without auth. For a laptop, or a server already protected by your own SSO proxy. Logs a warning on every start |
+
+Every variable above that holds a secret (`DECKWRIGHT_SECRET_KEY`, `DECKWRIGHT_GOOGLE_CLIENT_SECRET`) also accepts a `_FILE` variant, for example `DECKWRIGHT_SECRET_KEY_FILE`, which reads the value from a file. This is how `docker-compose.yml` passes Docker secrets.
 
 ## Development
 
