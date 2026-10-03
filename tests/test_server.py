@@ -286,23 +286,51 @@ def test_token_endpoint_has_a_higher_limit_than_browser_steps(output_dir, tmp_pa
     app, _ = _build(tmp_path)
     with TestClient(app, base_url="https://decks.example.com") as c:
         token = [c.post("/token", data={"grant_type": "x"}).status_code for _ in range(40)]
-        browser = [c.get("/authorize").status_code for _ in range(40)]
+        browser = [c.get("/authorize").status_code for _ in range(130)]
     assert 429 not in token
     assert 429 in browser
 
 
-def test_remote_mcp_preview_refuses_other_users_decks(output_dir, tmp_path):
+def test_owner_check_fails_closed_with_auth(output_dir, tmp_path):
     from deckwright.models import DeckSpec
 
+    with_auth = _remote_settings(tmp_path)
+    no_auth = _remote_settings(tmp_path, google_client_id=None, google_client_secret=None, allowed_domains=(),
+                               insecure_no_auth=True)
     spec = DeckSpec.model_validate({"slides": [{"layout": "title", "title": "Hi", "subtitle": "d"}]})
     deck = service.create(spec, owner="user-a")["id"]
-    service.check_owner(deck, "user-a")
+    service.check_owner(deck, "user-a", with_auth)
+    for subject in ("user-b", None):
+        with pytest.raises(FileNotFoundError):
+            service.check_owner(deck, subject, with_auth)
+    unowned = service.create(spec)["id"]  # built by the CLI, or before the upgrade
     with pytest.raises(FileNotFoundError):
-        service.check_owner(deck, "user-b")
-    with pytest.raises(FileNotFoundError):
-        service.check_owner(deck, None)
-    unowned = service.create(spec)["id"]
-    service.check_owner(unowned, "anyone")
+        service.check_owner(unowned, "anyone", with_auth)
+    service.check_owner(unowned, None, no_auth)  # no identities without auth: any existing deck
+
+
+def test_slide_numbers_below_one_are_not_found(output_dir, tmp_path):
+    app, _ = _build(tmp_path, google_client_id=None, google_client_secret=None, allowed_domains=(),
+                    insecure_no_auth=True)
+    with TestClient(app, base_url="https://decks.example.com") as c:
+        deck = c.post("/v1/presentations", json={"slides": [{"layout": "title", "title": "T"}]}).json()["id"]
+        for n in (0, -1):
+            assert c.get(f"/v1/presentations/{deck}/slides/{n}.png").status_code == 404
+
+
+def test_public_url_default_port_is_dropped(monkeypatch):
+    from deckwright import config
+
+    monkeypatch.setenv("DECKWRIGHT_PUBLIC_URL", "https://decks.example.com:443/")
+    assert config.load().public_url == "https://decks.example.com"
+    monkeypatch.setenv("DECKWRIGHT_PUBLIC_URL", "http://localhost:8765")
+    assert config.load().public_url == "http://localhost:8765"
+
+
+def test_bad_port_env_only_breaks_the_server_command(monkeypatch, capsys):
+    monkeypatch.setenv("DECKWRIGHT_PORT", "abc")
+    assert cli.main(["layouts", "--template", "sample"]) == 0
+    assert cli.main(["server"]) == 2
 
 
 def test_two_apps_in_one_process_keep_their_own_settings(output_dir, tmp_path):

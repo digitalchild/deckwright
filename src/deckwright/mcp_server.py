@@ -141,11 +141,7 @@ def _deck_tools(settings: Settings | None) -> list[Callable[..., Any]]:
         """
         if settings is None:
             return service.create(spec, name, allow_local_files=True)
-        service.check_spec(spec, settings)
-        token = get_access_token()
-        out = service.create(spec, name, allow_local_files=settings.allow_local_files,
-                             owner=token.subject if token else None)
-        service.audit_build(out, token)
+        out = service.create_remote(spec, name, settings, get_access_token())
         return service.public_result(out, settings)
 
     def preview_slides(deck_id: str, first: int = 1, last: int | None = None) -> list[Image]:
@@ -153,7 +149,7 @@ def _deck_tools(settings: Settings | None) -> list[Callable[..., Any]]:
         Renders at most 8 slides per call."""
         if settings is not None:
             token = get_access_token()
-            service.check_owner(deck_id, token.subject if token else None)
+            service.check_owner(deck_id, token.subject if token else None, settings)
         last = min(last or first + 7, first + 7)
         return [Image(path=p) for p in service.preview(deck_id, first, last, dpi=40)]
 

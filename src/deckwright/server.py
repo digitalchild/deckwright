@@ -94,10 +94,11 @@ def build_app(settings: config.Settings, provider: Provider | None = None, host:
 
     wrapped: ASGIApp = app
     wrapped = RateLimitMiddleware(wrapped, ("/files/",), RateLimiter(120, 60), settings.trusted_proxies)
-    wrapped = RateLimitMiddleware(wrapped, BROWSER_AUTH_PATHS, RateLimiter(30, 60), settings.trusted_proxies)
+    wrapped = RateLimitMiddleware(wrapped, BROWSER_AUTH_PATHS, RateLimiter(120, 60), settings.trusted_proxies)
     wrapped = RateLimitMiddleware(wrapped, SERVER_AUTH_PATHS, RateLimiter(600, 60), settings.trusted_proxies)
-    # Registration happens once per app install, not per request, so it gets a much lower limit.
-    wrapped = RateLimitMiddleware(wrapped, ("/register",), RateLimiter(60, 3600), settings.trusted_proxies)
+    # Registration happens once per app install. claude.ai registers from shared addresses for a whole org,
+    # so the limit allows a busy rollout; the cap on registrations that never sign in bounds the database.
+    wrapped = RateLimitMiddleware(wrapped, ("/register",), RateLimiter(600, 3600), settings.trusted_proxies)
     wrapped = BodyLimitMiddleware(wrapped, settings.max_body_bytes)
     return SecurityHeadersMiddleware(wrapped, hsts=(settings.public_url or "").startswith("https://"))
 

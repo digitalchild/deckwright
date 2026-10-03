@@ -82,7 +82,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
       # Release: build both platforms once, push under a staging tag, then scan and smoke test that exact
       # digest on each platform. Only then add the version tags and sign. What ships is what was tested.

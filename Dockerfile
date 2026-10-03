@@ -39,11 +39,13 @@ ENV PATH=/app/.venv/bin:$PATH \
     XDG_CONFIG_HOME=/data \
     DECKWRIGHT_DATA_DIR=/data \
     DECKWRIGHT_OUTPUT_DIR=/data/output \
-    DECKWRIGHT_CACHE=/tmp/deckwright-cache
+    DECKWRIGHT_CACHE=/tmp/deckwright-cache \
+    DECKWRIGHT_PORT=8765
 
 USER deckwright
 VOLUME ["/data"]
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=4).status == 200 else 1)"]
-CMD ["deckwright", "server", "--host", "0.0.0.0", "--port", "8765"]
+  CMD ["python", "-c", "import os,sys,urllib.request; sys.exit(0 if urllib.request.urlopen(f\"http://127.0.0.1:{os.environ['DECKWRIGHT_PORT']}/health\", timeout=4).status == 200 else 1)"]
+# The port comes from DECKWRIGHT_PORT, so the health check follows any change to it.
+CMD ["deckwright", "server", "--host", "0.0.0.0"]

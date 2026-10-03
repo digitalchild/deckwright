@@ -157,12 +157,25 @@ def _deck_template_id(path: Path) -> str | None:
     return _meta(path).get("template")
 
 
-def check_owner(deck_id: str, subject: str | None) -> None:
-    """Raise FileNotFoundError unless the deck exists and has no owner or belongs to subject.
+def check_owner(deck_id: str, subject: str | None, settings: Settings) -> None:
+    """Raise FileNotFoundError unless the caller may fetch this deck by id on a remote server.
+
+    With auth on, this fails closed: the deck must record an owner, and it must be the caller. Without auth
+    (DECKWRIGHT_INSECURE_NO_AUTH=1) there are no identities, so any existing deck is allowed.
     Not found, rather than forbidden, so ids of other users' decks are not confirmed."""
-    owner = _meta(deck_path(deck_id)).get("owner")
-    if owner is not None and owner != subject:
+    path = deck_path(deck_id)
+    if settings.auth and (subject is None or _meta(path).get("owner") != subject):
         raise FileNotFoundError(deck_id)
+
+
+def create_remote(spec: DeckSpec, name: str | None, settings: Settings, token: Any) -> dict[str, Any]:
+    """Build a deck for a remote caller: apply the server's limits, record the owner and audit the build.
+    Shared by the HTTP API and the MCP server so both follow one policy."""
+    check_spec(spec, settings)
+    out = create(spec, name, allow_local_files=settings.allow_local_files,
+                 owner=getattr(token, "subject", None))
+    audit_build(out, token)
+    return out
 
 
 _preview_lock = threading.Lock()

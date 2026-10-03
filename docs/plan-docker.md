@@ -139,9 +139,9 @@ Or does the review on a laptop, then copies the pack folder into the volume. Bot
 
 Safety rule: in remote mode with auth off, the server refuses to start unless `DECKWRIGHT_INSECURE_NO_AUTH=1`. Secure is the default. Insecure needs an explicit choice. Local mode (no `DECKWRIGHT_PUBLIC_URL`) trusts every caller, so it listens only on loopback, with no override.
 
-Deck privacy: in remote mode each deck records the person who built it. Only that person can download, preview or fetch its diagrams by id. Signed download links work for anyone who holds them, until they expire.
+Deck privacy: in remote mode each deck records the person who built it. Only that person can download, preview or fetch its diagrams by id. With auth on this fails closed: a deck with no recorded owner (built by the CLI, or before the upgrade) cannot be fetched by id at all. Signed download links work for anyone who holds them, until they expire.
 
-Rate limits: browser steps (`/authorize`, the Google callback, `/oauth/consent`) allow 30 requests per minute per address. `/token` and `/revoke` allow 600, because claude.ai calls them from a few shared addresses for all users. `/register` allows 60 per hour per address, and at most 5000 registrations may wait for a first sign-in at one time.
+Rate limits: browser steps (`/authorize`, the Google callback, `/oauth/consent`) allow 120 requests per minute per address (an office behind one NAT shares it). `/token` and `/revoke` allow 600 per minute, because claude.ai calls them from a few shared addresses for all users. `/register` allows 600 per hour per address, enough for an org-wide rollout through claude.ai, and at most 5000 registrations may wait for a first sign-in at one time.
 
 Secrets can also come from files (`DECKWRIGHT_SECRET_KEY_FILE`, `DECKWRIGHT_GOOGLE_CLIENT_SECRET_FILE`), so Docker secrets work without env vars.
 

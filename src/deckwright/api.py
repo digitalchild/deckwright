@@ -70,11 +70,6 @@ READ = [need("templates:read")]
 DECKS = [need("decks")]
 
 
-def _allow_local(request: Request) -> bool:
-    settings = _settings(request)
-    return settings.allow_local_files if settings is not None else ALLOW_LOCAL
-
-
 def _subject(request: Request) -> str | None:
     user = request.scope.get("user")
     return user.access_token.subject if isinstance(user, AuthenticatedUser) else None
@@ -85,7 +80,7 @@ def _check_owner(request: Request, deck_id: str) -> None:
     if _settings(request) is None:
         service.deck_path(deck_id)
         return
-    service.check_owner(deck_id, _subject(request))
+    service.check_owner(deck_id, _subject(request), _settings(request))
 
 
 def _build(request: Request, spec: DeckSpec, name: str | None = None) -> dict[str, Any]:
@@ -93,17 +88,16 @@ def _build(request: Request, spec: DeckSpec, name: str | None = None) -> dict[st
     settings = _settings(request)
     if settings is None and spec.output == "slides" and not ALLOW_SLIDES:
         raise HTTPException(403, "Google Slides output is disabled on this server; set DECKWRIGHT_ALLOW_SLIDES=1")
-    _remote(request, spec)
     user = request.scope.get("user")
     token = user.access_token if isinstance(user, AuthenticatedUser) else None
     try:
-        out = service.create(spec, name, allow_local_files=_allow_local(request),
-                             owner=token.subject if token else None)
+        if settings is None:
+            return service.create(spec, name, allow_local_files=ALLOW_LOCAL)
+        return service.create_remote(spec, name, settings, token)
+    except ValueError as exc:  # a remote limit from service.check_spec
+        raise HTTPException(422, str(exc)) from exc
     except (TemplateError, SelectionError, PackError) as exc:
         raise _bad(exc) from exc
-    if settings is not None:
-        service.audit_build(out, token)
-    return out
 
 
 def _remote(request: Request, spec: DeckSpec) -> None:
@@ -250,6 +244,8 @@ def diagram_file(request: Request, deck_id: str, name: str) -> FileResponse:
 
 @app.get("/v1/presentations/{deck_id}/slides/{number}.png", dependencies=DECKS)
 def slide_png(request: Request, deck_id: str, number: int) -> FileResponse:
+    if number < 1:
+        raise HTTPException(404, "slide not found")
     try:
         _check_owner(request, deck_id)
         pngs = service.preview(deck_id, first=number, last=number)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -54,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sv = sub.add_parser("server", help="run the MCP server and HTTP API together (remote use, see deckwright.config)")
     sv.add_argument("--host", default="127.0.0.1")
-    sv.add_argument("--port", type=int, default=8765)
+    sv.add_argument("--port", type=int, help="default: DECKWRIGHT_PORT or 8765")
 
     m = sub.add_parser("mcp", help="run the MCP server (stdio by default)")
     m.add_argument("--http", action="store_true", help="use streamable HTTP instead of stdio")
@@ -153,7 +154,14 @@ def main(argv: list[str] | None = None) -> int:
 
         uvicorn.run("deckwright.api:app", host=args.host, port=args.port, server_header=False)
     elif args.cmd == "server":
-        return _server(args.host, args.port)
+        port = args.port
+        if port is None:
+            try:
+                port = int(os.environ.get("DECKWRIGHT_PORT") or 8765)
+            except ValueError:
+                print("error: DECKWRIGHT_PORT must be an integer", file=sys.stderr)
+                return 2
+        return _server(args.host, port)
     elif args.cmd == "mcp":
         if args.http:
             return _server(args.host, args.port)

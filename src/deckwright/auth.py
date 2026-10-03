@@ -117,6 +117,7 @@ class Store:
             # Self-registered apps that never completed a sign-in within a day are abandoned. Apps that did
             # are kept: clients such as Claude cache their client_id and cannot recover if it disappears.
             self.db.execute("DELETE FROM clients WHERE kind = 'dcr' AND used = 0 AND created < ?", (now - 86400,))
+            self.db.execute("DELETE FROM consents WHERE client_id NOT IN (SELECT client_id FROM clients)")
 
 
 class Provider:
@@ -187,7 +188,9 @@ class Provider:
     def revoke_client(self, client_id: str) -> bool:
         with self.store.lock:
             gone = self.store.db.execute("DELETE FROM clients WHERE client_id = ?", (client_id,)).rowcount
-            self.store.db.execute("DELETE FROM tokens WHERE client_id = ?", (client_id,))
+            for table in ("tokens", "consents"):
+                self.store.db.execute(f"DELETE FROM {table} WHERE client_id = ?", (client_id,))
+            self.store.db.execute("DELETE FROM codes WHERE json_extract(data, '$.client_id') = ?", (client_id,))
         audit.info("client_revoked client_id=%s found=%s", client_id, bool(gone))
         return bool(gone)
 
@@ -365,15 +368,16 @@ class Provider:
         access, refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         now = int(time.time())
         refresh_expires = refresh_expires or now + REFRESH_TTL
+        access_expires = min(now + ACCESS_TTL, refresh_expires)
         with self.store.lock:
             self.store.db.execute("UPDATE clients SET used = 1 WHERE client_id = ? AND used = 0", (client_id,))
-            for tok, kind, expires in ((access, "access", min(now + ACCESS_TTL, refresh_expires)),
+            for tok, kind, expires in ((access, "access", access_expires),
                                        (refresh, "refresh", refresh_expires)):
                 self.store.db.execute(
                     "INSERT INTO tokens (hash, kind, family, client_id, subject, email, scopes, expires) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (token_hash(tok), kind, family, client_id, subject, email, " ".join(scopes), expires))
-        return OAuthToken(access_token=access, token_type="Bearer", expires_in=ACCESS_TTL, refresh_token=refresh,
+        return OAuthToken(access_token=access, token_type="Bearer", expires_in=access_expires - now, refresh_token=refresh,
                           scope=" ".join(scopes))
 
     def _token_row(self, token: str, kind: str) -> tuple | None:

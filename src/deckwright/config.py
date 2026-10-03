@@ -60,9 +60,7 @@ def _writable(path: Path) -> bool:
 
 
 def _default_data_dir() -> Path:
-    """/data in the Docker image, else the user's data folder."""
-    if Path("/data").is_dir():
-        return Path("/data")
+    """The user's data folder. The Docker image sets DECKWRIGHT_DATA_DIR=/data."""
     return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "deckwright"
 
 
@@ -131,6 +129,15 @@ class Settings:
                         "this server can use it")
 
 
+def _origin(url: str) -> str:
+    """Drop a trailing slash and a default port, so the URL matches the Host header clients send."""
+    url = url.rstrip("/")
+    for scheme, port in (("https://", ":443"), ("http://", ":80")):
+        if url.startswith(scheme) and url.endswith(port) and "/" not in url[len(scheme):]:
+            return url[: -len(port)]
+    return url
+
+
 def load() -> Settings:
     public_url = _env("DECKWRIGHT_PUBLIC_URL")
     try:
@@ -138,7 +145,7 @@ def load() -> Settings:
     except ValueError as exc:
         raise ConfigError("DECKWRIGHT_TRUSTED_PROXIES must be IP addresses or networks") from exc
     return Settings(
-        public_url=public_url.rstrip("/") if public_url else None,
+        public_url=_origin(public_url) if public_url else None,
         secret_key=_env("DECKWRIGHT_SECRET_KEY"),
         google_client_id=_env("DECKWRIGHT_GOOGLE_CLIENT_ID"),
         google_client_secret=_env("DECKWRIGHT_GOOGLE_CLIENT_SECRET"),

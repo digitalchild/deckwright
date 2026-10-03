@@ -415,7 +415,8 @@ print(result.warnings)
 | `DECKWRIGHT_RETENTION_DAYS` | `7` | Built decks older than this are deleted |
 | `DECKWRIGHT_MAX_BODY_BYTES` | `5242880` (5 MB) | Request body size limit on the remote server |
 | `DECKWRIGHT_MAX_SLIDES` | `100` | Slide count limit on a deck spec, on the remote server |
-| `DECKWRIGHT_DATA_DIR` | `/data` | Base folder for `auth.db`, set by the image |
+| `DECKWRIGHT_DATA_DIR` | `~/.local/share/deckwright` (`/data` in the image) | Base folder for `auth.db` |
+| `DECKWRIGHT_PORT` | `8765` | Port for `deckwright server` when `--port` is not given. The Docker health check uses it too, so in Docker change the port with this variable, not `--port` |
 | `DECKWRIGHT_TRUSTED_PROXIES` | unset | Comma-separated IP addresses or networks allowed to set `X-Forwarded-For`. Give the exact address your reverse proxy connects from, for example the gateway of a fixed Docker network (see `docker-compose.yml`). Never trust a whole range that other containers can use |
 | `DECKWRIGHT_API_DOCS` | unset | `1` serves the OpenAPI docs (`/docs`, `/openapi.json`) in remote mode. The pages are public, because a browser cannot send a token; every API call still needs one |
 | `DECKWRIGHT_INSECURE_NO_AUTH` | unset | `1` lets remote mode start without auth. For a laptop, or a server already protected by your own SSO proxy. Logs a warning on every start |
