@@ -1,0 +1,27 @@
+src/deckwright/service.py
+  s_1576e7138db6fb::t_b5f84d23ef9338 263-274
+tests/test_auth.py
+  s_1576e7138db6fb::t_b5f84d23ef9338 663-684
+src/deckwright/auth.py
+  s_1576e7138db6fb::t_b5f84d23ef9338 426-427,545-548
+tests/test_server.py
+  s_1576e7138db6fb::t_b5f84d23ef9338 368-383
+docs/plan-docker.md
+  ai_agent 153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a4cff78a6bce74475067eed5830b37a116e174ff",
+  "prompts": {},
+  "sessions": {
+    "s_1576e7138db6fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0300a77b-371b-4ee2-943c-6a15fb2af254",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jamie Madden <digitalchild@gmail.com>"
+    }
+  }
+}
