@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from urllib.parse import urlparse
 
 from mcp.server.auth.routes import build_resource_metadata_url
@@ -131,7 +132,6 @@ def local_api_app() -> ASGIApp:
 
 def _sweeper(settings: config.Settings, provider: Provider | None) -> None:
     """Hourly: drop expired auth rows and old decks."""
-    stop = threading.Event()
 
     def loop() -> None:
         while True:  # once at start, then hourly, so frequent restarts still clean up
@@ -143,8 +143,7 @@ def _sweeper(settings: config.Settings, provider: Provider | None) -> None:
                     log.info("removed %d decks older than %d days", removed, settings.retention_days)
             except Exception:
                 log.exception("cleanup failed")
-            if stop.wait(3600):
-                return
+            time.sleep(3600)
 
     threading.Thread(target=loop, name="deckwright-sweeper", daemon=True).start()
 

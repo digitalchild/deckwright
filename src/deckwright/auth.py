@@ -97,6 +97,9 @@ class Store:
         for table, column, decl in (("clients", "used", "INTEGER NOT NULL DEFAULT 0"), ("codes", "family", "TEXT")):
             if column not in {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                if (table, column) == ("clients", "used"):  # existing apps that hold tokens are in use
+                    self.db.execute("UPDATE clients SET used = 1 WHERE kind = 'admin' OR client_id IN "
+                                    "(SELECT client_id FROM tokens)")
         self.lock = threading.Lock()
 
     def run(self, sql: str, args: tuple = ()) -> list[tuple]:
@@ -405,7 +408,7 @@ class Provider:
             audit.info("refresh_reuse client_id=%s email=%s family_revoked=1", client_id, email)
             return None
         return _Refresh(token=refresh_token, client_id=client_id, scopes=scopes.split(), expires_at=expires,
-                        resource=self.s.mcp_url, subject=subject, email=email, family=family, retry=retry)
+                        resource=self.s.mcp_url, subject=subject, email=email, family=family)
 
     async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token: RefreshToken,
                                      scopes: list[str]) -> OAuthToken:
@@ -413,18 +416,22 @@ class Provider:
         granted = scopes or refresh_token.scopes
         if set(granted) - set(refresh_token.scopes):
             raise TokenError("invalid_scope", "scope wider than the original grant")
+        key = token_hash(refresh_token.token)
         with self.store.lock:
             marked = self.store.db.execute(  # used holds the rotation time, for the retry grace window
                 "UPDATE tokens SET used = ? WHERE hash = ? AND kind = 'refresh' AND used = 0",
-                (int(time.time()), token_hash(refresh_token.token))).rowcount
-            if not marked and getattr(refresh_token, "retry", False):
+                (int(time.time()), key)).rowcount
+            row = None if marked else self.store.db.execute("SELECT used FROM tokens WHERE hash = ?", (key,)).fetchone()
+            # Decide the retry under the lock: a concurrent retry may already have spent it (used = 1).
+            retry = row is not None and row[0] > 1 and time.time() - row[0] <= REFRESH_GRACE
+            if retry:
                 # A retry inside the grace window: the client never got the last rotation. Revoke what that
                 # rotation issued, so only one live refresh token exists, then rotate again below.
                 marked = 1
                 self.store.db.execute("DELETE FROM tokens WHERE family = ? AND kind = 'refresh' AND used = 0",
                                       (family,))
                 # One retry only: date the rotation to the epoch, so any further reuse counts as theft.
-                self.store.db.execute("UPDATE tokens SET used = 1 WHERE hash = ?", (token_hash(refresh_token.token),))
+                self.store.db.execute("UPDATE tokens SET used = 1 WHERE hash = ?", (key,))
             if marked:  # only the request that won the rotation retires the old access tokens
                 self.store.db.execute("DELETE FROM tokens WHERE family = ? AND kind = 'access'", (family,))
         if not marked:
@@ -518,7 +525,6 @@ class _Code(AuthorizationCode):
 class _Refresh(RefreshToken):
     email: str = ""
     family: str = ""
-    retry: bool = False
 
 
 MAX_REDIRECT_URIS = 10

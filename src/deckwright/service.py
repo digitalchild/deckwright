@@ -251,8 +251,14 @@ def sweep_output(days: int) -> int:
         return 0
     cutoff = time.time() - days * 86400
     removed = 0
+    def old(path: Path) -> bool:
+        try:
+            return path.stat().st_mtime < cutoff
+        except OSError:  # removed while the sweep runs
+            return False
+
     for deck in OUTPUT_DIR.glob("*.pptx"):
-        if deck.stat().st_mtime >= cutoff or not _ID.match(deck.stem):
+        if not old(deck) or not _ID.match(deck.stem):
             continue
         for extra in (OUTPUT_DIR / f"{deck.stem}-diagrams", OUTPUT_DIR / "previews" / deck.stem):
             if extra.is_dir():
@@ -263,7 +269,7 @@ def sweep_output(days: int) -> int:
     # Leftovers whose deck is gone (a failed build, or a deck removed by hand).
     orphans = [*OUTPUT_DIR.glob("*-diagrams"), *(OUTPUT_DIR / "previews").glob("*"), *OUTPUT_DIR.glob("*.json")]
     for extra in orphans:
-        if extra.stat().st_mtime >= cutoff:
+        if not old(extra):
             continue
         stem = extra.name[: -len("-diagrams")] if extra.name.endswith("-diagrams") else extra.stem
         if not _ID.match(stem) or (OUTPUT_DIR / f"{stem}.pptx").exists():

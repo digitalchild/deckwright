@@ -682,3 +682,20 @@ def test_refresh_token_can_be_retried_only_once(output_dir, tmp_path, monkeypatc
         assert client.post("/token", data=data).status_code == 400  # a second retry is theft...
         bearer = {"Authorization": f"Bearer {retry['access_token']}"}
         assert client.get("/v1/templates", headers=bearer).status_code == 401  # ...and ends the session
+
+
+def test_migration_keeps_clients_that_hold_tokens(tmp_path):
+    db = sqlite3.connect(tmp_path / "auth.db")
+    db.executescript("""
+        CREATE TABLE clients (client_id TEXT PRIMARY KEY, info TEXT NOT NULL, salt TEXT, kind TEXT NOT NULL,
+                              name TEXT, created INTEGER NOT NULL);
+        CREATE TABLE tokens (hash TEXT PRIMARY KEY, kind TEXT NOT NULL, family TEXT NOT NULL,
+                             client_id TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL,
+                             scopes TEXT NOT NULL, expires INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
+        INSERT INTO clients VALUES ('live', '{}', NULL, 'dcr', 'Claude', 0), ('dead', '{}', NULL, 'dcr', 'x', 0);
+        INSERT INTO tokens VALUES ('h', 'refresh', 'f', 'live', 's', 'e', 'decks', 9999999999, 0);
+    """)
+    db.close()
+    provider = Provider(_settings(tmp_path))
+    provider.store.sweep()
+    assert {r[0] for r in provider.store.run("SELECT client_id FROM clients")} == {"live"}
