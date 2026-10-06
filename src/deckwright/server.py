@@ -134,7 +134,7 @@ def _sweeper(settings: config.Settings, provider: Provider | None) -> None:
     stop = threading.Event()
 
     def loop() -> None:
-        while not stop.wait(3600):
+        while True:  # once at start, then hourly, so frequent restarts still clean up
             try:
                 if provider is not None:
                     provider.store.sweep()
@@ -143,6 +143,8 @@ def _sweeper(settings: config.Settings, provider: Provider | None) -> None:
                     log.info("removed %d decks older than %d days", removed, settings.retention_days)
             except Exception:
                 log.exception("cleanup failed")
+            if stop.wait(3600):
+                return
 
     threading.Thread(target=loop, name="deckwright-sweeper", daemon=True).start()
 

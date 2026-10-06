@@ -150,6 +150,7 @@ class Provider:
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         _check_redirect_uris([str(u) for u in client_info.redirect_uris or []])
+        _check_metadata_size(client_info)
         count = "SELECT COUNT(*) FROM clients WHERE kind = 'dcr' AND used = 0"
         if self.store.run(count)[0][0] >= MAX_UNUSED_CLIENTS:
             self.store.sweep()  # drop abandoned registrations now, not at the next hourly sweep
@@ -516,6 +517,21 @@ class _Refresh(RefreshToken):
     email: str = ""
     family: str = ""
     retry: bool = False
+
+
+MAX_REDIRECT_URIS = 10
+MAX_URI_LENGTH = 2000
+MAX_NAME_LENGTH = 200
+MAX_CLIENT_RECORD = 16 * 1024
+
+
+def _check_metadata_size(client: OAuthClientInformationFull) -> None:
+    """Registration is open, so keep each stored record small."""
+    uris = [str(u) for u in client.redirect_uris or []]
+    if (len(uris) > MAX_REDIRECT_URIS or any(len(u) > MAX_URI_LENGTH for u in uris)
+            or len(client.client_name or "") > MAX_NAME_LENGTH
+            or len(client.model_dump_json()) > MAX_CLIENT_RECORD):
+        raise RegistrationError("invalid_client_metadata", "client metadata is too large")
 
 
 def _check_redirect_uris(uris: list[str]) -> None:

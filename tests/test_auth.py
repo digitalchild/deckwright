@@ -647,3 +647,16 @@ def test_full_registration_cap_drops_stale_registrations_first(output_dir, tmp_p
         assert client.post("/register", json=body).status_code == 400
         provider.store.run("UPDATE clients SET created = 0")  # the first one is now older than an hour
         assert client.post("/register", json=body).status_code == 201
+
+
+@pytest.mark.parametrize("over", [
+    {"redirect_uris": [f"https://a.example/{i}" for i in range(11)]},
+    {"redirect_uris": ["https://a.example/" + "x" * 2100]},
+    {"client_name": "n" * 201},
+    {"client_uri": "https://a.example/" + "x" * 17000},
+])
+def test_oversized_registrations_are_refused(output_dir, tmp_path, over):
+    app = server.build_app(_settings(tmp_path))
+    body = {"redirect_uris": [REDIRECT], "token_endpoint_auth_method": "none", **over}
+    with TestClient(app, base_url=BASE) as client:
+        assert client.post("/register", json=body).status_code == 400
