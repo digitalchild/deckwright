@@ -1,0 +1,13 @@
+src/deckwright/server.py
+  ai_agent 105,124-129
+src/deckwright/cli.py
+  ai_agent 155-157
+tests/test_server.py
+  ai_agent 360-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7e0a0dceb3dd814ee85aac6d6b93d8f44449b490",
+  "prompts": {}
+}
