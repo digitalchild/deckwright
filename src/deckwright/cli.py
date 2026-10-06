@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     aca.add_argument("--name", required=True)
     aca.add_argument("--redirect-uri", action="append", required=True, help="exact callback URL (repeatable)")
     aca.add_argument("--scope", action="append", choices=["decks", "templates:read"], required=True,
-                     help="scope to grant (repeatable)")
+                     help="scope to grant (repeatable); MCP clients need both, a read-only client can use the HTTP API only")
     aca.add_argument("--auth-method", choices=["client_secret_post", "client_secret_basic"],
                      default="client_secret_post")
     acsub.add_parser("list", help="list registered clients")

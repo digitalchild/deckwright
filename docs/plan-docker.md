@@ -79,9 +79,9 @@ Google tokens are used once, at sign-in. Deckwright does not keep them.
 
 - `deckwright server` builds one ASGI app. The MCP app (with the SDK auth routes) comes first. The FastAPI app is mounted after it, so the `/v1/...` paths do not change.
 - A FastAPI dependency on every `/v1` route checks the bearer token with the same provider that `/mcp` uses. A missing or bad token returns 401 with a `WWW-Authenticate: Bearer` header. No route is exempt.
-- Scopes: `decks` (build, plan, download, preview) and `templates:read` (brand, layouts, templates, thumbnails). Claude connectors get both. Registered API clients get only the scopes the admin grants.
+- Scopes: `decks` (build, plan, download, preview) and `templates:read` (brand, layouts, templates, thumbnails). Claude connectors get both. Registered API clients get only the scopes the admin grants. `/mcp` needs both scopes, so a read-only client can use the HTTP API but not MCP.
 - `/docs`, `/redoc` and `/openapi.json` are off in remote mode. `DECKWRIGHT_API_DOCS=1` turns them on. The docs pages are public (the schema is in the open source repo, and a browser cannot send a bearer token); every API call still needs a token.
-- `deckwright serve` (API only) and `deckwright mcp --http` (MCP only) stay for local use. In remote mode they apply the same auth, so no command can expose an open server by accident.
+- `deckwright serve` (API only) stays for local use. `deckwright mcp --http` runs the same full server as `deckwright server` (MCP and the HTTP API). Local mode listens on loopback only. In remote mode every command applies the same auth, so no command can expose an open server by accident.
 
 Register an API client (for example an n8n OAuth2 credential):
 

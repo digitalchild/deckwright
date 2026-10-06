@@ -148,7 +148,7 @@ See [docs/kinds.md](docs/kinds.md) for the full kind contract: the standard fiel
 | `deckwright template update <id> [new.pptx]` | Regenerate a pack after its `.pptx` changed |
 | `deckwright template inspect <id>` | Print the raw master layouts (placeholder idx and position) |
 | `deckwright serve [--host] [--port]` | Run the HTTP API |
-| `deckwright mcp [--http] [--host] [--port]` | Run the MCP server (stdio by default) |
+| `deckwright mcp [--http] [--host] [--port]` | Run the MCP server (stdio by default). `--http` runs the same full server as `deckwright server`: MCP and the HTTP API, on loopback only in local mode |
 | `deckwright server [--host] [--port]` | Run the MCP server and the HTTP API together, on one port (remote use, see [Run with Docker](#run-with-docker)) |
 | `deckwright auth google [--client-secrets <file.json>]` | Sign in to Google, for Slides output |
 | `deckwright auth client add --name <n> --redirect-uri <url> --scope <decks\|templates:read>` | Register an OAuth API client for the remote server; prints its secret once |
@@ -326,7 +326,7 @@ docker exec deckwright deckwright auth client list
 docker exec deckwright deckwright auth client revoke <client-id>
 ```
 
-Scopes: `decks` lets a client build, plan, suggest, download and preview decks. `templates:read` lets a client read brand, layouts, templates and thumbnails.
+Scopes: `decks` lets a client build, plan, suggest, download and preview decks. `templates:read` lets a client read brand, layouts, templates and thumbnails. The MCP endpoint (`/mcp`) needs both scopes, so a client with only `templates:read` can use the HTTP API but not MCP.
 
 ### Downloads
 
