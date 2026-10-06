@@ -152,7 +152,9 @@ def main(argv: list[str] | None = None) -> int:
         _check_local_bind(args.host)
         import uvicorn
 
-        uvicorn.run("deckwright.api:app", host=args.host, port=args.port, server_header=False)
+        from .server import local_api_app
+
+        uvicorn.run(local_api_app(), host=args.host, port=args.port, server_header=False)
     elif args.cmd == "server":
         port = args.port
         if port is None:

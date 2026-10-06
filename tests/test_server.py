@@ -357,3 +357,11 @@ def test_unknown_host_is_refused_against_dns_rebinding(output_dir, tmp_path):
         assert c.get("/health").status_code == 200
         assert c.get("/health", headers={"host": "127.0.0.1:8765"}).status_code == 200  # container health check
         assert c.get("/health", headers={"host": "attacker.example"}).status_code == 421
+
+
+def test_local_serve_app_checks_the_host(output_dir):
+    from deckwright.server import local_api_app
+
+    with TestClient(local_api_app(), base_url="http://127.0.0.1:8000") as c:
+        assert c.get("/v1/templates").status_code == 200
+        assert c.get("/v1/templates", headers={"host": "attacker.example"}).status_code == 421

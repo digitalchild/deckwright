@@ -102,7 +102,7 @@ def build_app(settings: config.Settings, provider: Provider | None = None, host:
     wrapped = RateLimitMiddleware(wrapped, ("/register",), RateLimiter(600, 3600), settings.trusted_proxies)
     wrapped = BodyLimitMiddleware(wrapped, settings.max_body_bytes)
     # Loopback names stay allowed in remote mode so the container health check works.
-    hosts = ["localhost", "127.0.0.1", "[::1]"]
+    hosts = list(LOOPBACK_HOSTS)
     if settings.remote:
         hosts.append(urlparse(settings.public_url).netloc)
     wrapped = HostCheckMiddleware(wrapped, hosts)
@@ -119,6 +119,14 @@ class RedactFilter(logging.Filter):
                 path = "/files/<redacted>"
             record.args = (*record.args[:2], path, *record.args[3:])
         return True
+
+
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+
+
+def local_api_app() -> ASGIApp:
+    """The HTTP API alone, for `deckwright serve` on loopback, with the same Host check as the full server."""
+    return SecurityHeadersMiddleware(HostCheckMiddleware(api.app, LOOPBACK_HOSTS), hsts=False)
 
 
 def _sweeper(settings: config.Settings, provider: Provider | None) -> None:
