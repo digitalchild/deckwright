@@ -141,7 +141,7 @@ Safety rule: in remote mode with auth off, the server refuses to start unless `D
 
 Deck privacy: in remote mode each deck records the person who built it. Only that person can download, preview or fetch its diagrams by id. With auth on this fails closed: a deck with no recorded owner (built by the CLI, or before the upgrade) cannot be fetched by id at all. Signed download links work for anyone who holds them, until they expire.
 
-Rate limits: browser steps (`/authorize`, the Google callback, `/oauth/consent`) allow 120 requests per minute per address (an office behind one NAT shares it). `/token` and `/revoke` allow 600 per minute, because claude.ai calls them from a few shared addresses for all users. `/register` allows 600 per hour per address, enough for an org-wide rollout through claude.ai, and at most 5000 registrations may wait for a first sign-in at one time.
+Rate limits: browser steps (`/authorize`, the Google callback, `/oauth/consent`) allow 120 requests per minute per address (an office behind one NAT shares it). `/token` and `/revoke` allow 600 per minute, because claude.ai calls them from a few shared addresses for all users. `/register` allows 600 per hour per address, enough for an org-wide rollout through claude.ai, and at most 5000 registrations may wait for a first sign-in at one time. A registration with no sign-in after one hour is dropped, so one address can hold only about 600.
 
 Secrets can also come from files (`DECKWRIGHT_SECRET_KEY_FILE`, `DECKWRIGHT_GOOGLE_CLIENT_SECRET_FILE`), so Docker secrets work without env vars.
 
@@ -150,7 +150,7 @@ Secrets can also come from files (`DECKWRIGHT_SECRET_KEY_FILE`, `DECKWRIGHT_GOOG
 Every phase meets these rules before it is done.
 
 Auth and tokens:
-- OAuth 2.1 rules: PKCE (S256) required, exact redirect URI match, short-lived single-use authorization codes (10 minutes, and a reused code revokes the tokens it issued), refresh token rotation with reuse detection (a repeat within 30 seconds is refused but treated as a client retry; a later repeat revokes the session), and a fixed 30-day session from sign-in.
+- OAuth 2.1 rules: PKCE (S256) required, exact redirect URI match, short-lived single-use authorization codes (10 minutes, and a reused code revokes the tokens it issued), refresh token rotation with reuse detection (a repeat within 30 seconds is a client retry and gets a fresh pair, which revokes the pair it replaces; a later repeat revokes the session), and a fixed 30-day session from sign-in.
 - Redirect URIs: https, or http on loopback only. No user info (`user@host`) or fragments.
 - Consent per app: registration is open, so after Google sign-in Deckwright shows a consent page that names the app and its redirect host. A code is issued only after the person selects Allow. The answer is bound to the browser with a `SameSite=Strict` cookie and remembered per person, app, redirect URI and scopes. A new destination or wider scopes ask again. This closes the confused-deputy issue that the MCP security best practices describe for proxies with dynamic client registration.
 - Opaque random tokens (`secrets.token_urlsafe(32)`). Stored as SHA-256 hashes. Compared with `hmac.compare_digest`.

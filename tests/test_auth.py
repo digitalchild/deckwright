@@ -616,14 +616,34 @@ def test_narrower_refresh_keeps_the_full_grant_for_later(output_dir, tmp_path, m
         assert set(full["scope"].split()) == {"decks", "templates:read"}
 
 
-def test_refresh_retry_within_grace_keeps_the_session(output_dir, tmp_path, monkeypatch):
+def test_refresh_retry_within_grace_gets_new_tokens(output_dir, tmp_path, monkeypatch):
     app = server.build_app(_settings(tmp_path))
     _patch_google(monkeypatch)
     with TestClient(app, base_url=BASE) as client:
         client_id = _register(client)
         tokens = _full_flow(client, client_id)
         data = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "client_id": client_id}
-        new = client.post("/token", data=data).json()
-        assert client.post("/token", data=data).status_code == 400  # the retry is refused...
-        bearer = {"Authorization": f"Bearer {new['access_token']}"}
-        assert client.get("/v1/templates", headers=bearer).status_code == 200  # ...but the session lives on
+        lost = client.post("/token", data=data).json()  # the client never sees this response
+        retry = client.post("/token", data=data)
+        assert retry.status_code == 200
+        bearer = {"Authorization": f"Bearer {retry.json()['access_token']}"}
+        assert client.get("/v1/templates", headers=bearer).status_code == 200
+        lost_refresh = {**data, "refresh_token": lost["refresh_token"]}
+        assert client.post("/token", data=lost_refresh).status_code == 400  # only one live refresh token
+        assert client.post("/token", data={**data, "refresh_token": retry.json()["refresh_token"]}).status_code == 200
+
+
+
+
+def test_full_registration_cap_drops_stale_registrations_first(output_dir, tmp_path, monkeypatch):
+    import deckwright.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "MAX_UNUSED_CLIENTS", 1)
+    provider = Provider(_settings(tmp_path))
+    app = server.build_app(provider.s, provider)
+    body = {"redirect_uris": [REDIRECT], "token_endpoint_auth_method": "none"}
+    with TestClient(app, base_url=BASE) as client:
+        assert client.post("/register", json=body).status_code == 201
+        assert client.post("/register", json=body).status_code == 400
+        provider.store.run("UPDATE clients SET created = 0")  # the first one is now older than an hour
+        assert client.post("/register", json=body).status_code == 201

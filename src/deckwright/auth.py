@@ -56,7 +56,8 @@ PENDING_TTL = 600
 ACCESS_TTL = 3600
 REFRESH_TTL = 30 * 86400
 MAX_UNUSED_CLIENTS = 5000
-REFRESH_GRACE = 30  # seconds a rotated refresh token is refused without ending the session
+UNUSED_CLIENT_TTL = 3600  # a real app signs in within minutes of registering; older unused rows are dropped
+REFRESH_GRACE = 30  # seconds a rotated refresh token may be retried before reuse counts as theft
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS clients (
@@ -115,9 +116,10 @@ class Store:
         with self.lock:
             for table in ("pending", "codes", "tokens"):
                 self.db.execute(f"DELETE FROM {table} WHERE expires < ?", (now,))
-            # Self-registered apps that never completed a sign-in within a day are abandoned. Apps that did
+            # Self-registered apps that never completed a sign-in within an hour are abandoned. Apps that did
             # are kept: clients such as Claude cache their client_id and cannot recover if it disappears.
-            self.db.execute("DELETE FROM clients WHERE kind = 'dcr' AND used = 0 AND created < ?", (now - 86400,))
+            self.db.execute("DELETE FROM clients WHERE kind = 'dcr' AND used = 0 AND created < ?",
+                            (now - UNUSED_CLIENT_TTL,))
             self.db.execute("DELETE FROM consents WHERE client_id NOT IN (SELECT client_id FROM clients)")
 
 
@@ -148,8 +150,10 @@ class Provider:
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         _check_redirect_uris([str(u) for u in client_info.redirect_uris or []])
-        unused = self.store.run("SELECT COUNT(*) FROM clients WHERE kind = 'dcr' AND used = 0")[0][0]
-        if unused >= MAX_UNUSED_CLIENTS:  # bounded until the daily sweep drops abandoned registrations
+        count = "SELECT COUNT(*) FROM clients WHERE kind = 'dcr' AND used = 0"
+        if self.store.run(count)[0][0] >= MAX_UNUSED_CLIENTS:
+            self.store.sweep()  # drop abandoned registrations now, not at the next hourly sweep
+        if self.store.run(count)[0][0] >= MAX_UNUSED_CLIENTS:
             raise RegistrationError("invalid_client_metadata", "too many pending registrations; try again later")
         self._save_client(client_info, "dcr", client_info.client_name)
         audit.info("client_registered client_id=%s kind=dcr name=%r", client_info.client_id, client_info.client_name)
@@ -394,14 +398,13 @@ class Provider:
         family, client_id, subject, email, scopes, expires, used = row
         if client_id != client.client_id or expires < time.time():
             return None
-        if used and time.time() - used <= REFRESH_GRACE:  # a retry or a race: refuse it, keep the session
-            return None
-        if used:  # a rotated refresh token came back later: assume theft, end the whole session
+        retry = bool(used) and time.time() - used <= REFRESH_GRACE  # a lost response or a race: rotate again
+        if used and not retry:  # a rotated refresh token came back later: assume theft, end the whole session
             self._revoke_family(family)
             audit.info("refresh_reuse client_id=%s email=%s family_revoked=1", client_id, email)
             return None
         return _Refresh(token=refresh_token, client_id=client_id, scopes=scopes.split(), expires_at=expires,
-                        resource=self.s.mcp_url, subject=subject, email=email, family=family)
+                        resource=self.s.mcp_url, subject=subject, email=email, family=family, retry=retry)
 
     async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token: RefreshToken,
                                      scopes: list[str]) -> OAuthToken:
@@ -413,6 +416,12 @@ class Provider:
             marked = self.store.db.execute(  # used holds the rotation time, for the retry grace window
                 "UPDATE tokens SET used = ? WHERE hash = ? AND kind = 'refresh' AND used = 0",
                 (int(time.time()), token_hash(refresh_token.token))).rowcount
+            if not marked and getattr(refresh_token, "retry", False):
+                # A retry inside the grace window: the client never got the last rotation. Revoke what that
+                # rotation issued, so only one live refresh token exists, then rotate again below.
+                marked = 1
+                self.store.db.execute("DELETE FROM tokens WHERE family = ? AND kind = 'refresh' AND used = 0",
+                                      (family,))
             if marked:  # only the request that won the rotation retires the old access tokens
                 self.store.db.execute("DELETE FROM tokens WHERE family = ? AND kind = 'access'", (family,))
         if not marked:
@@ -506,6 +515,7 @@ class _Code(AuthorizationCode):
 class _Refresh(RefreshToken):
     email: str = ""
     family: str = ""
+    retry: bool = False
 
 
 def _check_redirect_uris(uris: list[str]) -> None:
