@@ -423,6 +423,8 @@ class Provider:
                 marked = 1
                 self.store.db.execute("DELETE FROM tokens WHERE family = ? AND kind = 'refresh' AND used = 0",
                                       (family,))
+                # One retry only: date the rotation to the epoch, so any further reuse counts as theft.
+                self.store.db.execute("UPDATE tokens SET used = 1 WHERE hash = ?", (token_hash(refresh_token.token),))
             if marked:  # only the request that won the rotation retires the old access tokens
                 self.store.db.execute("DELETE FROM tokens WHERE family = ? AND kind = 'access'", (family,))
         if not marked:
@@ -540,6 +542,10 @@ def _check_redirect_uris(uris: list[str]) -> None:
         raise RegistrationError("invalid_redirect_uri", "at least one redirect_uri is required")
     for uri in uris:
         u = urllib.parse.urlparse(uri)
+        try:
+            u.port  # noqa: B018  (raises on an out-of-range or malformed port)
+        except ValueError as exc:
+            raise RegistrationError("invalid_redirect_uri", f"redirect_uri has an invalid port: {uri}") from exc
         loopback = u.scheme == "http" and u.hostname in LOOPBACK
         if not (u.scheme == "https" or loopback) or u.fragment or not u.hostname or u.username or u.password:
             raise RegistrationError("invalid_redirect_uri", f"redirect_uri must be https or loopback http: {uri}")

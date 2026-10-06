@@ -660,3 +660,25 @@ def test_oversized_registrations_are_refused(output_dir, tmp_path, over):
     body = {"redirect_uris": [REDIRECT], "token_endpoint_auth_method": "none", **over}
     with TestClient(app, base_url=BASE) as client:
         assert client.post("/register", json=body).status_code == 400
+
+
+def test_redirect_uri_with_invalid_port_is_refused(output_dir, tmp_path):
+    app = server.build_app(_settings(tmp_path))
+    with TestClient(app, base_url=BASE) as client:
+        resp = client.post("/register", json={"redirect_uris": ["https://a.example:99999/cb"],
+                                              "token_endpoint_auth_method": "none"})
+        assert resp.status_code == 400
+
+
+def test_refresh_token_can_be_retried_only_once(output_dir, tmp_path, monkeypatch):
+    app = server.build_app(_settings(tmp_path))
+    _patch_google(monkeypatch)
+    with TestClient(app, base_url=BASE) as client:
+        client_id = _register(client)
+        tokens = _full_flow(client, client_id)
+        data = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "client_id": client_id}
+        assert client.post("/token", data=data).status_code == 200
+        retry = client.post("/token", data=data).json()
+        assert client.post("/token", data=data).status_code == 400  # a second retry is theft...
+        bearer = {"Authorization": f"Bearer {retry['access_token']}"}
+        assert client.get("/v1/templates", headers=bearer).status_code == 401  # ...and ends the session

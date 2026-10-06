@@ -365,3 +365,19 @@ def test_local_serve_app_checks_the_host(output_dir):
     with TestClient(local_api_app(), base_url="http://127.0.0.1:8000") as c:
         assert c.get("/v1/templates").status_code == 200
         assert c.get("/v1/templates", headers={"host": "attacker.example"}).status_code == 421
+
+
+def test_sweep_removes_orphaned_outputs(output_dir):
+    import time as _time
+
+    old = _time.time() - 30 * 86400
+    deck = "orphan-" + "a" * 32
+    paths = [service.OUTPUT_DIR / f"{deck}-diagrams", service.OUTPUT_DIR / "previews" / deck]
+    for p in paths:
+        p.mkdir(parents=True, exist_ok=True)
+    meta = service.OUTPUT_DIR / f"{deck}.json"
+    meta.write_text("{}")
+    for p in [*paths, meta]:
+        os.utime(p, (old, old))
+    service.sweep_output(7)
+    assert not any(p.exists() for p in [*paths, meta])

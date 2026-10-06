@@ -260,4 +260,16 @@ def sweep_output(days: int) -> int:
         _meta_path(deck).unlink(missing_ok=True)
         deck.unlink(missing_ok=True)
         removed += 1
+    # Leftovers whose deck is gone (a failed build, or a deck removed by hand).
+    orphans = [*OUTPUT_DIR.glob("*-diagrams"), *(OUTPUT_DIR / "previews").glob("*"), *OUTPUT_DIR.glob("*.json")]
+    for extra in orphans:
+        if extra.stat().st_mtime >= cutoff:
+            continue
+        stem = extra.name[: -len("-diagrams")] if extra.name.endswith("-diagrams") else extra.stem
+        if not _ID.match(stem) or (OUTPUT_DIR / f"{stem}.pptx").exists():
+            continue
+        if extra.is_dir():
+            shutil.rmtree(extra, ignore_errors=True)
+        else:
+            extra.unlink(missing_ok=True)
     return removed
