@@ -12,7 +12,11 @@ Status on 2026-09-30. Read this first when you pick up the work.
 
 See [plan-open-source.md](plan-open-source.md). It replaces the old section 1 (template registry, surfaces, kind contract, inspection tool, standard template).
 
-## 2. Smaller improvements (proposals, not requested yet)
+## 2. Docker service
+
+See [plan-docker.md](plan-docker.md). Implemented, pending merge and v0.2.0 release: a self-hosted Docker image with a remote MCP server, built-in Google OAuth and signed download links.
+
+## 3. Smaller improvements (proposals, not requested yet)
 
 - [ ] Resolve relative image paths against the spec file's folder in the CLI.
 - [ ] Optionally drop unused master layouts from output decks to reduce file size (about 0.9 MB of layout art).

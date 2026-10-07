@@ -10,8 +10,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 
 from . import service
 from .engine import TemplateError
@@ -27,22 +28,92 @@ ALLOW_LOCAL = os.environ.get("DECKWRIGHT_ALLOW_LOCAL_FILES") == "1"
 ALLOW_SLIDES = os.environ.get("DECKWRIGHT_ALLOW_SLIDES") == "1"
 
 
-def _check_output(spec: DeckSpec) -> None:
-    if spec.output == "slides" and not ALLOW_SLIDES:
-        raise HTTPException(403, "Google Slides output is disabled on this server; set DECKWRIGHT_ALLOW_SLIDES=1")
-
 app = FastAPI(
     title="Deckwright",
-    version="0.1.0",
+    version="0.2.0",
     description="Create branded presentations from a template pack.",
 )
+
+
+# deckwright.server puts {"settings": Settings | None, "auth": resource metadata URL | None} in each request's
+# scope under this key. Without it (plain `deckwright serve` or tests) the API runs in local mode.
+SCOPE_KEY = "deckwright"
+
+
+def _server(request: Request) -> dict[str, Any]:
+    return request.scope.get(SCOPE_KEY) or {}
+
+
+def _settings(request: Request) -> Any:
+    return _server(request).get("settings")
+
+
+def need(scope: str) -> Any:
+    """A route dependency: with auth on, the caller needs a valid bearer token that carries this scope."""
+
+    def check(request: Request) -> None:
+        auth = _server(request).get("auth")
+        if auth is None:
+            return
+        user = request.scope.get("user")
+        if not isinstance(user, AuthenticatedUser):
+            raise HTTPException(401, "authentication required",
+                                headers={"WWW-Authenticate": f'Bearer resource_metadata="{auth}"'})
+        if scope not in user.scopes:
+            raise HTTPException(403, "insufficient scope",
+                                headers={"WWW-Authenticate": f'Bearer error="insufficient_scope", scope="{scope}"'})
+
+    return Depends(check)
+
+
+READ = [need("templates:read")]
+DECKS = [need("decks")]
+
+
+def _subject(request: Request) -> str | None:
+    user = request.scope.get("user")
+    return user.access_token.subject if isinstance(user, AuthenticatedUser) else None
+
+
+def _check_owner(request: Request, deck_id: str) -> None:
+    """On a remote server, only the person who built a deck may fetch it by id."""
+    if _settings(request) is None:
+        service.deck_path(deck_id)
+        return
+    service.check_owner(deck_id, _subject(request), _settings(request))
+
+
+def _build(request: Request, spec: DeckSpec, name: str | None = None) -> dict[str, Any]:
+    """Check the spec against this server's policy, build the deck and audit it on a remote server."""
+    settings = _settings(request)
+    if settings is None and spec.output == "slides" and not ALLOW_SLIDES:
+        raise HTTPException(403, "Google Slides output is disabled on this server; set DECKWRIGHT_ALLOW_SLIDES=1")
+    user = request.scope.get("user")
+    token = user.access_token if isinstance(user, AuthenticatedUser) else None
+    try:
+        if settings is None:
+            return service.create(spec, name, allow_local_files=ALLOW_LOCAL)
+        return service.create_remote(spec, name, settings, token)
+    except ValueError as exc:  # a remote limit from service.check_spec
+        raise HTTPException(422, str(exc)) from exc
+    except (TemplateError, SelectionError, PackError) as exc:
+        raise _bad(exc) from exc
+
+
+def _remote(request: Request, spec: DeckSpec) -> None:
+    settings = _settings(request)
+    if settings is not None:
+        try:
+            service.check_spec(spec, settings)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
 
 def _bad(exc: Exception) -> HTTPException:
     return HTTPException(status_code=422, detail=str(exc))
 
 
-@app.get("/v1/brand")
+@app.get("/v1/brand", dependencies=READ)
 def brand(template: str | None = Query(None, description="Template pack id. Default: DECKWRIGHT_TEMPLATE or the only pack.")) -> dict[str, Any]:
     try:
         return service.brand_guide(template)
@@ -50,7 +121,7 @@ def brand(template: str | None = Query(None, description="Template pack id. Defa
         raise _bad(exc) from exc
 
 
-@app.get("/v1/layouts")
+@app.get("/v1/layouts", dependencies=READ)
 def layouts(kind: str | None = None, template: str | None = Query(None, description="Template pack id. Default: DECKWRIGHT_TEMPLATE or the only pack.")) -> list[dict[str, Any]]:
     try:
         return service.list_layouts(template, kind=kind)
@@ -58,7 +129,7 @@ def layouts(kind: str | None = None, template: str | None = Query(None, descript
         raise _bad(exc) from exc
 
 
-@app.get("/v1/layouts/{layout_id}")
+@app.get("/v1/layouts/{layout_id}", dependencies=READ)
 def layout(layout_id: str, template: str | None = Query(None, description="Template pack id. Default: DECKWRIGHT_TEMPLATE or the only pack.")) -> dict[str, Any]:
     try:
         return service.get_layout(layout_id, template)
@@ -66,7 +137,7 @@ def layout(layout_id: str, template: str | None = Query(None, description="Templ
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.get("/v1/layouts/{layout_id}/thumbnail.png")
+@app.get("/v1/layouts/{layout_id}/thumbnail.png", dependencies=READ)
 def layout_thumbnail(layout_id: str, template: str | None = Query(None, description="Template pack id. Default: DECKWRIGHT_TEMPLATE or the only pack.")) -> FileResponse:
     try:
         path = service.thumbnail(template, layout_id)
@@ -77,7 +148,7 @@ def layout_thumbnail(layout_id: str, template: str | None = Query(None, descript
     return FileResponse(path, media_type="image/png")
 
 
-@app.get("/v1/template/layouts")
+@app.get("/v1/template/layouts", dependencies=READ)
 def template_layouts(template: str | None = Query(None, description="Template pack id. Default: DECKWRIGHT_TEMPLATE or the only pack.")) -> list[dict[str, Any]]:
     """All master layouts with placeholder idx, type and box (raw mode)."""
     try:
@@ -86,13 +157,13 @@ def template_layouts(template: str | None = Query(None, description="Template pa
         raise _bad(exc) from exc
 
 
-@app.get("/v1/templates")
+@app.get("/v1/templates", dependencies=READ)
 def templates() -> list[dict[str, Any]]:
     """Installed template packs."""
     return service.list_templates()
 
 
-@app.get("/v1/templates/{template_id}")
+@app.get("/v1/templates/{template_id}", dependencies=READ)
 def template_detail(template_id: str) -> dict[str, Any]:
     """One pack: status, kinds, open issues and low-confidence layouts (no rebuild)."""
     try:
@@ -101,7 +172,7 @@ def template_detail(template_id: str) -> dict[str, Any]:
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.post("/v1/suggest")
+@app.post("/v1/suggest", dependencies=DECKS)
 def suggest(kind: str = Body(...), content: dict[str, Any] = Body(default_factory=dict),
             template: str | None = Query(None, description="Template pack id. Default: DECKWRIGHT_TEMPLATE or the only pack.")) -> list[dict[str, Any]]:
     """Rank the layouts of a kind for the given content (lower score is better)."""
@@ -111,40 +182,35 @@ def suggest(kind: str = Body(...), content: dict[str, Any] = Body(default_factor
         raise _bad(exc) from exc
 
 
-@app.post("/v1/plan")
-def plan(spec: DeckSpec) -> list[dict[str, Any]]:
+@app.post("/v1/plan", dependencies=DECKS)
+def plan(request: Request, spec: DeckSpec) -> list[dict[str, Any]]:
     """Resolve the layout for each slide without building the deck."""
+    _remote(request, spec)
     try:
         return service.plan(spec)
     except (TemplateError, SelectionError, PackError) as exc:
         raise _bad(exc) from exc
 
 
-@app.post("/v1/presentations")
-def create(spec: DeckSpec, name: str | None = Query(None)) -> dict[str, Any]:
-    _check_output(spec)
-    try:
-        out = service.create(spec, name, allow_local_files=ALLOW_LOCAL)
-    except (TemplateError, SelectionError, PackError) as exc:
-        raise _bad(exc) from exc
+@app.post("/v1/presentations", dependencies=DECKS)
+def create(request: Request, spec: DeckSpec, name: str | None = Query(None)) -> dict[str, Any]:
+    out = _build(request, spec, name)
+    if _settings(request) is not None:
+        return service.public_result(out, _settings(request))
     out.pop("path")
     out["diagrams"] = [f"/v1/presentations/{out['id']}/diagrams/{Path(d).name}" for d in out["diagrams"]]
     out["download_url"] = f"/v1/presentations/{out['id']}.pptx"
     return out
 
 
-@app.post("/v1/presentations.pptx", response_class=Response)
-def create_file(spec: DeckSpec) -> Response:
+@app.post("/v1/presentations.pptx", response_class=Response, dependencies=DECKS)
+def create_file(request: Request, spec: DeckSpec) -> Response:
     """Build and return the .pptx directly.
 
     X-Deckwright-Warning-Count holds the number of warnings and X-Deckwright-Warnings the warnings
     as an ASCII JSON array. Use POST /v1/presentations for a JSON response instead.
     """
-    _check_output(spec)
-    try:
-        out = service.create(spec, allow_local_files=ALLOW_LOCAL)
-    except (TemplateError, SelectionError, PackError) as exc:
-        raise _bad(exc) from exc
+    out = _build(request, spec)
     headers = {
         "Content-Disposition": f'attachment; filename="{out["id"]}.pptx"',
         "X-Deckwright-Warning-Count": str(len(out["warnings"])),
@@ -153,20 +219,21 @@ def create_file(spec: DeckSpec) -> Response:
     return FileResponse(out["path"], media_type=PPTX_MIME, headers=headers)
 
 
-@app.get("/v1/presentations/{deck_id}.pptx")
-def download(deck_id: str) -> FileResponse:
+@app.get("/v1/presentations/{deck_id}.pptx", dependencies=DECKS)
+def download(request: Request, deck_id: str) -> FileResponse:
     try:
+        _check_owner(request, deck_id)
         path = service.deck_path(deck_id)
     except FileNotFoundError as exc:
         raise HTTPException(404, "presentation not found") from exc
     return FileResponse(path, media_type=PPTX_MIME, filename=path.name)
 
 
-@app.get("/v1/presentations/{deck_id}/diagrams/{name}")
-def diagram_file(deck_id: str, name: str) -> FileResponse:
+@app.get("/v1/presentations/{deck_id}/diagrams/{name}", dependencies=DECKS)
+def diagram_file(request: Request, deck_id: str, name: str) -> FileResponse:
     """Editable .excalidraw source of a diagram in a deck."""
     try:
-        service.deck_path(deck_id)
+        _check_owner(request, deck_id)
     except FileNotFoundError as exc:
         raise HTTPException(404, "presentation not found") from exc
     path = service.OUTPUT_DIR / f"{deck_id}-diagrams" / Path(name).name
@@ -175,9 +242,12 @@ def diagram_file(deck_id: str, name: str) -> FileResponse:
     return FileResponse(path, media_type="application/json", filename=path.name)
 
 
-@app.get("/v1/presentations/{deck_id}/slides/{number}.png")
-def slide_png(deck_id: str, number: int) -> FileResponse:
+@app.get("/v1/presentations/{deck_id}/slides/{number}.png", dependencies=DECKS)
+def slide_png(request: Request, deck_id: str, number: int) -> FileResponse:
+    if number < 1:
+        raise HTTPException(404, "slide not found")
     try:
+        _check_owner(request, deck_id)
         pngs = service.preview(deck_id, first=number, last=number)
     except FileNotFoundError as exc:
         raise HTTPException(404, "presentation not found") from exc

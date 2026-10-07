@@ -11,3 +11,5 @@ output/
 .DS_Store
 *.mcpb
 sample-partial.pptx
+secrets/
+.env

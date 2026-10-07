@@ -1,8 +1,9 @@
-"""Command line: build, plan, preview, serve (HTTP API) and mcp."""
+"""Command line: build, plan, preview, serve (HTTP API), mcp, server (remote MCP and API) and auth."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -52,6 +53,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
 
+    sv = sub.add_parser("server", help="run the MCP server and HTTP API together (remote use, see deckwright.config)")
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, help="default: DECKWRIGHT_PORT or 8765")
+
     m = sub.add_parser("mcp", help="run the MCP server (stdio by default)")
     m.add_argument("--http", action="store_true", help="use streamable HTTP instead of stdio")
     m.add_argument("--host", default="127.0.0.1")
@@ -61,6 +66,18 @@ def main(argv: list[str] | None = None) -> int:
     asub = a.add_subparsers(dest="service", required=True)
     ag = asub.add_parser("google", help="sign in to Google (needed for Slides output)")
     ag.add_argument("--client-secrets", type=Path, help="OAuth client secrets JSON from Google Cloud Console")
+    ac = asub.add_parser("client", help="manage OAuth API clients of the remote server")
+    acsub = ac.add_subparsers(dest="client_action", required=True)
+    aca = acsub.add_parser("add", help="register a confidential API client; prints its secret once")
+    aca.add_argument("--name", required=True)
+    aca.add_argument("--redirect-uri", action="append", required=True, help="exact callback URL (repeatable)")
+    aca.add_argument("--scope", action="append", choices=["decks", "templates:read"], required=True,
+                     help="scope to grant (repeatable); MCP clients need both, a read-only client can use the HTTP API only")
+    aca.add_argument("--auth-method", choices=["client_secret_post", "client_secret_basic"],
+                     default="client_secret_post")
+    acsub.add_parser("list", help="list registered clients")
+    acr = acsub.add_parser("revoke", help="delete a client and all its tokens")
+    acr.add_argument("client_id")
 
     args = ap.parse_args(argv)
 
@@ -122,19 +139,102 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "template":
         return _template(args)
     elif args.cmd == "serve":
+        from . import config
+
+        try:
+            remote = config.load().remote
+        except config.ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if remote:  # never serve the API remotely without the auth that `server` adds
+            print("DECKWRIGHT_PUBLIC_URL is set: starting the full server with auth", file=sys.stderr)
+            return _server(args.host, args.port)
+        _check_local_bind(args.host)
         import uvicorn
 
-        uvicorn.run("deckwright.api:app", host=args.host, port=args.port)
+        from .server import local_api_app
+
+        uvicorn.run(local_api_app(), host=args.host, port=args.port, server_header=False)
+    elif args.cmd == "server":
+        port = args.port
+        if port is None:
+            try:
+                port = int(os.environ.get("DECKWRIGHT_PORT") or 8765)
+            except ValueError:
+                print("error: DECKWRIGHT_PORT must be an integer", file=sys.stderr)
+                return 2
+        return _server(args.host, port)
     elif args.cmd == "mcp":
+        if args.http:
+            return _server(args.host, args.port)
         from .mcp_server import run
 
-        run(args.http, args.host, args.port)
+        run()
+    return 0
+
+
+def _check_local_bind(host: str) -> None:
+    """Local mode trusts every caller (admin tools, local files), so it only listens on loopback."""
+    from .config import LOOPBACK
+
+    if host not in LOOPBACK:
+        raise SystemExit(f"error: refusing to listen on {host} in local mode. Set DECKWRIGHT_PUBLIC_URL, "
+                         "DECKWRIGHT_SECRET_KEY and the DECKWRIGHT_GOOGLE_* variables for remote use")
+
+
+def _server(host: str, port: int) -> int:
+    from . import config, server
+
+    try:
+        if not config.load().remote:
+            _check_local_bind(host)
+        server.run(host, port)
+    except config.ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _clients(args) -> int:
+    import json
+
+    from . import config
+    from .auth import Provider
+
+    try:
+        settings = config.load()
+        settings.check()
+        if not settings.auth:
+            raise config.ConfigError("auth is off: set the DECKWRIGHT_GOOGLE_* variables first")
+    except config.ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    provider = Provider(settings)
+    if args.client_action == "add":
+        try:
+            client_id, secret = provider.add_client(args.name, args.redirect_uri, args.scope, args.auth_method)
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps({"client_id": client_id, "client_secret": secret,
+                          "authorization_url": f"{settings.public_url}/authorize",
+                          "token_url": f"{settings.public_url}/token", "scope": " ".join(args.scope),
+                          "note": "store the secret now; it is not shown again"}, indent=1))
+    elif args.client_action == "list":
+        print(json.dumps(provider.list_clients(), indent=1))
+    else:
+        if not provider.revoke_client(args.client_id):
+            print(f"error: unknown client '{args.client_id}'", file=sys.stderr)
+            return 2
+        print(f"revoked {args.client_id} and its tokens")
     return 0
 
 
 def _auth(args) -> int:
     from . import gslides
 
+    if args.service == "client":
+        return _clients(args)
     if args.service == "google":
         try:
             token_path = gslides.login(args.client_secrets)
