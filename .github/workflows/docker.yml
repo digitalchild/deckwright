@@ -132,6 +132,8 @@ jobs:
               sleep 2
             done
             docker rm -f dw
+            # The runner's image store keeps one platform per digest, so drop it before the next platform pulls.
+            docker rmi "$REF"
             [ "$ok" = 1 ] || { echo "smoke test failed on $platform"; exit 1; }
           done
 
