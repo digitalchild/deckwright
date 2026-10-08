@@ -131,8 +131,14 @@ jobs:
               if docker exec dw python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health')"; then ok=1; break; fi
               sleep 2
             done
+            arch=$(docker image inspect --format '{{.Architecture}}' "$REF")
+            [ "$ok" = 1 ] || docker logs dw
             docker rm -f dw
             [ "$ok" = 1 ] || { echo "smoke test failed on $platform"; exit 1; }
+            [ "linux/$arch" = "$platform" ] || { echo "ran $arch, expected $platform"; exit 1; }
+            # The classic image store (the runner default) keeps one platform per digest, so a second
+            # --platform pull of the same digest fails. Drop the image before the next platform.
+            docker rmi "$REF"
           done
 
       - name: Add the version tags
