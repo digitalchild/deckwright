@@ -136,12 +136,23 @@ function main() {
   ];
   args.push(IMAGE, "deckwright", "mcp");
 
-  const child = spawn(docker, args, { stdio: "inherit", env });
+  // Pipe the streams through this process. Claude Desktop runs this script in an Electron utility
+  // process, where stdin is not a real file descriptor, so a child that inherits it reads nothing.
+  const child = spawn(docker, args, { stdio: ["pipe", "pipe", "pipe"], env });
+  process.stdin.pipe(child.stdin);
+  child.stdout.pipe(process.stdout);
+  child.stderr.pipe(process.stderr);
+  child.stdin.on("error", () => {}); // the container exited; the exit handler reports it
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.on(signal, () => child.kill(signal));
   }
   child.on("error", (err) => fail(`could not start Docker: ${err.message}`));
-  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+  child.on("exit", (code, signal) => {
+    if (code) say(`the container stopped with exit code ${code}.`);
+    process.exitCode = code ?? (signal ? 1 : 0);
+  });
+  // Exit once the container's output is flushed, so the last reply is not lost.
+  child.on("close", () => process.exit());
 }
 
 main();
