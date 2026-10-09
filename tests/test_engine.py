@@ -79,6 +79,11 @@ def test_speaker_notes_land_on_notes_slide(template):
     slide = prs.slides[0]
     assert slide.has_notes_slide
     assert "Remember to smile." in slide.notes_slide.notes_text_frame.text
+    # Keynote refuses a deck whose notes master is not listed in presentation.xml.
+    pres = prs.part._element
+    ids = pres.findall(f"{qn('p:notesMasterIdLst')}/{qn('p:notesMasterId')}")
+    assert len(ids) == 1 and prs.part.rels[ids[0].get(qn("r:id"))].target_part is prs.notes_master.part
+    assert pres.index(pres.find(qn("p:notesMasterIdLst"))) == pres.index(pres.find(qn("p:sldMasterIdLst"))) + 1
 
 
 def test_agenda_with_two_items_removes_unused_shapes_and_numbers_them(template):
