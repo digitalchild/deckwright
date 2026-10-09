@@ -10,8 +10,9 @@ from typing import Any
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.mcpserver import Image, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
-from . import pack, packs, service
+from . import hostpaths, pack, packs, service
 from .config import Settings
 from .models import DeckSpec
 
@@ -48,6 +49,12 @@ REMOTE_INSTRUCTIONS = INSTRUCTIONS.split("\nAdd a template")[0].replace(
     "Images: an https URL, a data: URI, or an absolute local file path.", "Images: an https URL or a data: URI."
 ) + "\nTemplates are managed by the server's administrators.\n"
 
+HOST_INSTRUCTIONS = """
+Files: Deckwright runs in a container that can see only the user's Deckwright folder, {folder}.
+Built decks go to its Decks folder. To add a template or use a local image, ask the user to put the file
+in the Inbox folder, then pass its full path. Paths outside {folder} are refused.
+"""
+
 _TOOLS: list[Callable[..., Any]] = []
 _ADMIN_TOOLS: list[Callable[..., Any]] = []
 _RESOURCES: list[tuple[str, Callable[..., Any]]] = []
@@ -70,6 +77,14 @@ def _resource(uri: str, **_: Any) -> Callable[[Callable[..., Any]], Callable[...
     return wrap
 
 
+def _on_host(fn: Callable[[], Any]) -> Any:
+    """Run fn and show container paths in its result as paths on the user's computer."""
+    try:
+        return hostpaths.to_host(fn())
+    except hostpaths.HostPathError as exc:  # tell Claude, so it can ask the user to move the file
+        raise ToolError(str(exc)) from None
+
+
 def _t(template: str | None) -> pack.Template:
     return pack.load(template)
 
@@ -80,7 +95,7 @@ def _t(template: str | None) -> pack.Template:
 @_tool
 def list_templates() -> list[dict[str, Any]]:
     """Installed template packs: id, name, status (draft or confirmed), layout count and kinds."""
-    return service.list_templates()
+    return _on_host(service.list_templates)
 
 
 @_tool
@@ -140,7 +155,7 @@ def _deck_tools(settings: Settings | None) -> list[Callable[..., Any]]:
           {"kind": "closing"}]}
         """
         if settings is None:
-            return service.create(spec, name, allow_local_files=True)
+            return _on_host(lambda: service.create(spec, name, allow_local_files=True))
         out = service.create_remote(spec, name, settings, get_access_token())
         return service.public_result(out, settings)
 
@@ -172,13 +187,14 @@ def add_template(pptx_path: str, template_id: str, name: str | None = None,
                  font_dirs: list[str] | None = None, replace: bool = False) -> dict[str, Any]:
     """Generate a draft pack from a .pptx file, build its sample deck and return the review report.
     template_id: lowercase letters, digits and hyphens, e.g. 'acme-sales'."""
-    return packs.add(pptx_path, template_id, name, [Path(d) for d in font_dirs or []], force=replace)
+    return _on_host(lambda: packs.add(hostpaths.to_container(pptx_path), template_id, name,
+                                      [Path(hostpaths.to_container(d)) for d in font_dirs or []], force=replace))
 
 
 @_admin
 def review_template(template: str, rebuild: bool = True) -> dict[str, Any]:
     """Rebuild the sample deck of a pack and report warnings, failed layouts, low-confidence kinds and issues."""
-    return packs.review(_t(template), rebuild=rebuild)
+    return _on_host(lambda: packs.review(_t(template), rebuild=rebuild))
 
 
 @_tool
@@ -209,19 +225,20 @@ def update_pack(template: str, changes: dict[str, Any]) -> dict[str, Any]:
       name, description, guide: text
       resolve: [issue index]                 drop issues that are fixed
     The pack returns to draft; confirm it again when done."""
-    return packs.patch(_folder(template), changes)
+    return _on_host(lambda: packs.patch(_folder(template), changes))
 
 
 @_admin
 def confirm_template(template: str) -> dict[str, Any]:
     """Mark a pack as reviewed. Refused while any layout fails to build."""
-    return packs.confirm(_t(template))
+    return _on_host(lambda: packs.confirm(_t(template)))
 
 
 @_admin
 def update_template(template: str, pptx_path: str | None = None) -> dict[str, Any]:
     """Regenerate a pack after its .pptx changed. Reviewed layouts whose shapes still exist are kept."""
-    return packs.update(_folder(template), pptx_path)
+    return _on_host(lambda: packs.update(_folder(template),
+                                         hostpaths.to_container(pptx_path) if pptx_path else None))
 
 
 # --------------------------------------------------------------------------- resources
@@ -258,7 +275,10 @@ def create(settings: Settings | None = None, provider: Any = None) -> MCPServer:
                                                                   default_scopes=SCOPES),
             revocation_options=RevocationOptions(enabled=True),
         )
-    server = MCPServer("deckwright", instructions=REMOTE_INSTRUCTIONS if settings else INSTRUCTIONS, auth=auth,
+    instructions = REMOTE_INSTRUCTIONS if settings else INSTRUCTIONS
+    if settings is None and hostpaths.host_dir() is not None:
+        instructions += HOST_INSTRUCTIONS.format(folder=hostpaths.host_dir())
+    server = MCPServer("deckwright", instructions=instructions, auth=auth,
                        auth_server_provider=provider if auth else None)
     for fn in _TOOLS + _deck_tools(settings) + ([] if settings else _ADMIN_TOOLS):
         server.tool()(fn)

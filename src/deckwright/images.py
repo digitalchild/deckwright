@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 
 from PIL import Image
 
+from . import hostpaths
+
 MAX_BYTES = 25 * 1024 * 1024
 TIMEOUT_S = 20
 
@@ -30,7 +32,7 @@ def _allowed_roots() -> list[Path]:
 
 def check_local_path(source: str, allow_local: bool) -> Path:
     """Resolve a local path; untrusted callers may only read inside DECKWRIGHT_ASSET_DIRS."""
-    path = Path(source).expanduser().resolve()
+    path = Path(hostpaths.to_container(source)).expanduser().resolve()
     if not allow_local and not any(path.is_relative_to(r) for r in _allowed_roots()):
         raise PermissionError("local file paths are disabled; use a URL or data URI, or set DECKWRIGHT_ASSET_DIRS")
     return path
