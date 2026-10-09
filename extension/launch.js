@@ -184,7 +184,7 @@ function dockerEnv(docker) {
 const pull = { child: null, exited: false }; // the download this launch started, if any
 
 // A pid file older than this is stale: the pull has ended, and its pid may belong to another process.
-const PULL_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+const PULL_MAX_AGE_MS = 60 * 60 * 1000;
 
 function pullRunning(dir) {
   if (pull.child) return !pull.exited;
