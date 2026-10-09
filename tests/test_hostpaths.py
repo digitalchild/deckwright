@@ -139,3 +139,9 @@ def test_old_packs_folder_stays_found(monkeypatch, tmp_path):
     monkeypatch.setenv("DECKWRIGHT_PACKS_DIR", str(tmp_path / "Templates"))
     paths = pack.search_paths()
     assert paths.index(tmp_path / "Templates") < paths.index(pack.CONFIG_DIR / "templates")
+
+
+def test_windows_paths_inside_messages(mapped, monkeypatch):
+    monkeypatch.setenv("DECKWRIGHT_HOST_DIR", r"C:\Users\Sam\Deckwright")
+    assert (hostpaths.to_host(f"cannot read {mapped}/Inbox/logo.png: bad")
+            == r"cannot read C:\Users\Sam\Deckwright\Inbox\logo.png: bad")

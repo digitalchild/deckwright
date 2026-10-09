@@ -80,7 +80,8 @@ def to_host(value: Any) -> Any:
     if host is None:
         return value
     data = str(data_dir().resolve())
-    return _map(value, host, data, re.compile(re.escape(data) + r"(?![\w.-])"))
+    # The data folder, then the rest of the path up to a space or quote, inside a message.
+    return _map(value, host, data, re.compile(re.escape(data) + r"(?![\w.-])(/[^\s'\"]*)?"))
 
 
 def _map(value: Any, host: PurePath, data: str, inside_text: re.Pattern[str]) -> Any:
@@ -89,7 +90,7 @@ def _map(value: Any, host: PurePath, data: str, inside_text: re.Pattern[str]) ->
             return str(host)
         if value.startswith(data + "/"):
             return str(host.joinpath(*PurePosixPath(value[len(data) + 1:]).parts))
-        return inside_text.sub(lambda _: str(host), value)
+        return inside_text.sub(lambda m: str(host.joinpath(*PurePosixPath(m.group(1) or "/").parts[1:])), value)
     if isinstance(value, list):
         return [_map(v, host, data, inside_text) for v in value]
     if isinstance(value, tuple):

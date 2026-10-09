@@ -65,8 +65,11 @@ function dockerEnv(docker) {
 function pullInBackground(docker, env, dir) {
   const pidFile = path.join(dir, "download.pid");
   try {
-    process.kill(Number(fs.readFileSync(pidFile, "utf8")), 0);
-    return; // a download from an earlier start is still running
+    // A pid file older than an hour is stale: the pull has ended, and its pid may belong to another process.
+    if (Date.now() - fs.statSync(pidFile).mtimeMs < 60 * 60 * 1000) {
+      process.kill(Number(fs.readFileSync(pidFile, "utf8")), 0);
+      return; // a download from an earlier start is still running
+    }
   } catch {
     // no download running
   }
