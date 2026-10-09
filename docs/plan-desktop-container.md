@@ -18,6 +18,19 @@ A person with Docker Desktop and Claude Desktop sets up Deckwright in three step
 
 They then have every tool, can add their own templates, and find their decks in that folder.
 
+## Startup options
+
+This plan adds one new option. Every current option stays and works as it does today.
+
+| Option | For | Needs | Status |
+|---|---|---|---|
+| Desktop extension, container | People who do not use a terminal | Docker Desktop, Claude Desktop | **New** |
+| Claude Code, container | Claude Code users without Python | Docker | **New** |
+| Desktop extension, checkout | Developers | Git checkout, uv | Unchanged |
+| Claude Code, checkout (`deckwright mcp`) | Developers | Git checkout, uv | Unchanged |
+| Local HTTP API (`deckwright serve`) | Scripts and other tools | Git checkout, uv | Unchanged |
+| Team server (`deckwright server` image) | A shared, signed-in server | Docker, a domain, Google OAuth | Unchanged |
+
 ## Approach
 
 ### A Claude Desktop extension that runs the container over stdio
@@ -67,9 +80,9 @@ The README shows it with the full hardening flags.
 
 ## Phases
 
-1. **README fixes.** Remove the wrong claim that Claude Desktop can use a `localhost` connector. Add a short "Get started" section at the top with three paths: the Desktop extension (no terminal), Claude Code, and a team server.
+1. **README fixes.** Remove the wrong claim that Claude Desktop can use a `localhost` connector. Add a short "Get started" section at the top that lists every startup option in the table above, and who each one is for.
 2. **Path map.** `DECKWRIGHT_HOST_DIR` in config, mapping in and out in the MCP tools, the folder layout, and refusal of paths outside the folder. Tests for each tool that takes or returns a path, including `..` and symlink escapes.
-3. **Launcher and extension.** `extension/launch.js`, a new manifest for the container extension, and `scripts/build_mcpb.py --container` (the current checkout-based extension stays for developers). Platforms: macOS and Windows.
+3. **Launcher and extension.** `extension/launch.js`, a new manifest for the container extension, and `scripts/build_mcpb.py --container`. Without the flag, the script builds the current checkout extension as before. Platforms: macOS and Windows.
 4. **Release.** CI builds the container extension with the release image digest and attaches `deckwright.mcpb` to the GitHub Release.
 5. **Docs.** `docs/connect-claude.md` gets a "Run it on your own computer" section with screenshots for non-technical readers.
 
