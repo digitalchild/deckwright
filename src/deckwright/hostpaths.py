@@ -58,7 +58,11 @@ def to_container(path: str) -> str:
     home = os.environ.get("DECKWRIGHT_HOST_HOME")
     if home and (path == "~" or path.startswith(("~/", "~\\"))):
         path = home + path[1:]
-    rel = _relative(type(host)(path), host)
+    given = type(host)(path)
+    if not given.anchor and not path.startswith("/"):
+        rel = given.parts  # relative to the folder, such as Inbox/acme.pptx
+    else:
+        rel = _relative(given, host)
     if rel is None:
         # Paths this server returned earlier may already be container paths.
         rel = _relative(PurePosixPath(path), PurePosixPath(data))

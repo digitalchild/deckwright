@@ -36,7 +36,13 @@ def test_container_path_is_accepted(mapped):
     assert hostpaths.to_container(str(mapped / "Inbox" / "a.png")) == str(mapped / "Inbox" / "a.png")
 
 
-@pytest.mark.parametrize("path", ["/Users/sam/Downloads/acme.pptx", "/etc/passwd", "relative/acme.pptx",
+def test_relative_path_is_inside_the_folder(mapped):
+    assert hostpaths.to_container("Inbox/acme.pptx") == str(mapped / "Inbox" / "acme.pptx")
+    with pytest.raises(hostpaths.HostPathError):
+        hostpaths.to_container("../secret.txt")
+
+
+@pytest.mark.parametrize("path", ["/Users/sam/Downloads/acme.pptx", "/etc/passwd",
                                   "/Users/sam/DeckwrightOther/a.pptx"])
 def test_paths_outside_the_folder_are_refused(mapped, path):
     with pytest.raises(hostpaths.HostPathError, match="outside your Deckwright folder"):
@@ -69,6 +75,7 @@ def test_results_show_host_paths(mapped):
 def test_windows_host_folder(mapped, monkeypatch):
     monkeypatch.setenv("DECKWRIGHT_HOST_DIR", r"C:\Users\Sam\Deckwright")
     assert hostpaths.to_container(r"c:\users\sam\deckwright\Inbox\acme.pptx") == str(mapped / "Inbox" / "acme.pptx")
+    assert hostpaths.to_container(r"Inbox\acme.pptx") == str(mapped / "Inbox" / "acme.pptx")
     assert hostpaths.to_host(str(mapped / "Decks" / "a.pptx")) == r"C:\Users\Sam\Deckwright\Decks\a.pptx"
     with pytest.raises(hostpaths.HostPathError):
         hostpaths.to_container(r"C:\Users\Sam\Downloads\acme.pptx")
