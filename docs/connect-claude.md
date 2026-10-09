@@ -10,7 +10,7 @@ If your company has no Deckwright server, you can run it on your own computer. Y
 2. Download `deckwright.mcpb` from the [latest release](https://github.com/digitalchild/deckwright/releases/latest).
 3. Double-click the file. Or open Claude Desktop, go to **Settings**, then **Extensions**, then **Install extension**.
 4. Pick a folder. The default is `~/Deckwright`.
-5. The first start downloads about 1 GB. Claude shows Deckwright as failed while it downloads. Wait a few minutes. Then restart Claude. The file `download.log` in your folder shows the progress.
+5. The first start downloads about 1 GB. While it downloads, ask Claude about Deckwright. Claude tells you that the download is running. Wait a few minutes. Then quit Claude completely and open it again. The file `download.log` in your folder shows the progress.
 
 Docker Desktop is free for small companies, education and personal use. Larger companies need a paid plan.
 

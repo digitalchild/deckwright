@@ -252,7 +252,7 @@ For remote use, with Google sign-in and a public URL, see [Run with Docker](#run
 4. Pick a folder. The default is `~/Deckwright`.
 5. Start a chat and ask for a deck.
 
-The first start downloads the image, about 1 GB. Claude shows Deckwright as failed while it downloads. Wait a few minutes, then restart Claude. `download.log` in your folder shows the progress.
+The first start downloads the image, about 1 GB. While it downloads, ask Claude about Deckwright: it says that the download is running and what to do next. When the download is done, quit Claude completely and open it again. `download.log` in your folder shows the progress. If Docker Desktop is missing or not running, Claude tells you that too.
 
 Docker Desktop is free for small companies, education and personal use. Larger companies need a paid plan.
 

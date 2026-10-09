@@ -4,6 +4,9 @@
 // then runs the container with the person's Deckwright folder mounted at /data. stdout carries the MCP
 // protocol, so every message from this script goes to stderr.
 //
+// When Deckwright cannot start yet (no Docker, or the first download is still running), this script serves
+// a small MCP server itself, so Claude can tell the person what to do instead of showing "Server disconnected".
+//
 // No dependencies: Node.js built-ins only.
 
 "use strict";
@@ -26,6 +29,78 @@ function say(message) {
 function fail(message) {
   say(message);
   process.exit(1);
+}
+
+// A minimal MCP server (newline-delimited JSON-RPC over stdio) with one tool, setup_status. status() returns
+// the current text, so a later call can report that the download has finished.
+function setupServer(status) {
+  say(status());
+  const tool = {
+    name: "setup_status",
+    description: "Deckwright is not ready yet. Call this to learn why and what the user must do, then tell the user.",
+    inputSchema: { type: "object", properties: {} },
+  };
+  const answer = (req) => {
+    switch (req.method) {
+      case "initialize":
+        return {
+          protocolVersion: (req.params && req.params.protocolVersion) || "2025-06-18",
+          capabilities: { tools: {} },
+          serverInfo: { name: "deckwright", version: "setup" },
+          instructions: `Deckwright is not ready yet. ${status()} When the user asks for Deckwright or a deck, `
+            + "call setup_status and tell them what it says, in plain words.",
+        };
+      case "ping":
+        return {};
+      case "tools/list":
+        return { tools: [tool] };
+      case "tools/call":
+        return req.params && req.params.name === tool.name ? { content: [{ type: "text", text: status() }] } : undefined;
+      case "prompts/list":
+        return { prompts: [] };
+      case "resources/list":
+        return { resources: [] };
+      case "resources/templates/list":
+        return { resourceTemplates: [] };
+      default:
+        return undefined;
+    }
+  };
+  let buffer = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    let end;
+    while ((end = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, end).trim();
+      buffer = buffer.slice(end + 1);
+      let req;
+      try {
+        req = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!req || req.id === undefined || req.id === null) continue; // a notification needs no answer
+      const result = answer(req);
+      const reply = result === undefined
+        ? { error: { code: -32601, message: `Deckwright is not ready yet, so ${req.method} is not available.` } }
+        : { result };
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: req.id, ...reply }) + "\n");
+    }
+  });
+  process.stdin.on("end", () => process.exit(0));
+}
+
+function imagePresent(docker, env) {
+  return spawnSync(docker, ["image", "inspect", IMAGE], { stdio: "ignore", env }).status === 0;
+}
+
+function downloadStatus(docker, env, dir) {
+  if (imagePresent(docker, env)) return "The download is done. Quit Claude completely and open it again to start Deckwright.";
+  const failed = pullInBackground(docker, env, dir); // starts a new download only when none is running
+  return (failed ? `The last download did not finish (${failed}), so Deckwright started it again. ` : "")
+    + "Deckwright is downloading its image (about 1 GB, first start only). Wait a few minutes, then quit Claude "
+    + `completely and open it again. Progress is in ${path.join(dir, "download.log")}.`;
 }
 
 function folder() {
@@ -98,35 +173,35 @@ function pullInBackground(docker, env, dir) {
 
 function main() {
   if (IMAGE.startsWith("__")) {
-    fail("this extension was built without an image. Download deckwright.mcpb from the GitHub Release.");
+    return setupServer(() => "This extension was built without an image. Download deckwright.mcpb from the "
+      + "Deckwright GitHub Release and install it again.");
   }
   const docker = findDocker();
   if (!docker) {
-    fail("Docker is not installed. Install Docker Desktop from https://www.docker.com/products/docker-desktop/, "
-      + "start it, then restart Claude.");
+    return setupServer(() => "Docker Desktop is not installed. Install it from "
+      + "https://www.docker.com/products/docker-desktop/, start it, then quit Claude completely and open it again.");
   }
   const env = dockerEnv(docker);
   if (spawnSync(docker, ["info"], { stdio: "ignore", timeout: 20000, env }).status !== 0) {
-    fail("Docker is not running. Start Docker Desktop, wait until it says it is running, then restart Claude.");
+    return setupServer(() => "Docker Desktop is not running. Start it, wait until it says it is running, then quit "
+      + "Claude completely and open it again.");
   }
 
   const dir = folder();
   if (/[,"]/.test(dir)) {
     // docker reads the --mount value as CSV.
-    fail(`the Deckwright folder path cannot contain a comma or a double quote: ${dir}. `
-      + "Pick another folder in the extension settings.");
+    return setupServer(() => `The Deckwright folder path cannot contain a comma or a double quote: ${dir}. `
+      + "Pick another folder in Claude's extension settings for Deckwright.");
   }
   try {
     for (const name of FOLDERS) fs.mkdirSync(path.join(dir, name), { recursive: true });
   } catch (err) {
-    fail(`cannot create the Deckwright folder ${dir}: ${err.message}`);
+    return setupServer(() => `Deckwright cannot create its folder ${dir} (${err.message}). Pick another folder in `
+      + "Claude's extension settings for Deckwright.");
   }
 
-  if (spawnSync(docker, ["image", "inspect", IMAGE], { stdio: "ignore", env }).status !== 0) {
-    const failed = pullInBackground(docker, env, dir);
-    fail((failed ? `the last download did not finish (${failed}). Trying again. ` : "")
-      + "Deckwright is downloading its image (about 1 GB, first start only). Wait a few minutes, then restart "
-      + `Claude. Progress is in ${path.join(dir, "download.log")}.`);
+  if (!imagePresent(docker, env)) {
+    return setupServer(() => downloadStatus(docker, env, dir));
   }
   for (const name of ["download.log", "download.pid"]) {
     fs.rmSync(path.join(dir, name), { force: true }); // the image is here, so the download notes are done
