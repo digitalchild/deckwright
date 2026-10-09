@@ -19,6 +19,7 @@ jobs:
       - run: uv sync --frozen --extra google
       - run: uv run ruff check src scripts tests
       - run: uv run python -m pytest -q
+      - run: node --check extension/launch.js
 
   audit:
     runs-on: ubuntu-latest
