@@ -72,6 +72,7 @@ def test_download_status_follows_the_pull(tmp_path):
     _, _, first, later, _ = _session(_with_fake_docker(tmp_path, FAKE_PULL_SECONDS="1"), wait=2.5)
     assert first.startswith("Deckwright is downloading its image")
     assert later.startswith("The download stopped (no route to host)")
+    assert not (tmp_path / "Deckwright" / "download.pid").exists()
 
 
 def test_docker_not_running(tmp_path):

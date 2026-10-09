@@ -35,8 +35,7 @@ const AGAIN = "quit Claude completely and open it again";
 
 // A minimal MCP server (newline-delimited JSON-RPC over stdio) with one tool, setup_status. status() checks
 // again on each call, so the tool can report that Docker now runs or that the download has finished.
-function setupServer(status) {
-  const first = status();
+function setupServer(status, first = status()) {
   say(first);
   const tool = {
     name: "setup_status",
@@ -109,15 +108,15 @@ function dockerRunning(docker, env) {
   return spawnSync(docker, ["info"], { stdio: "ignore", timeout: 20000, env }).status === 0;
 }
 
+const DOCKER_STOPPED = `Docker Desktop is not running. Start it, wait until it says it is running, then ${AGAIN}.`;
+
 function dockerStatus() {
   const docker = findDocker();
   if (!docker) {
     return "Docker Desktop is not installed. Install it from https://www.docker.com/products/docker-desktop/, "
       + `start it, then ${AGAIN}.`;
   }
-  if (!dockerRunning(docker, dockerEnv(docker))) {
-    return `Docker Desktop is not running. Start it, wait until it says it is running, then ${AGAIN}.`;
-  }
+  if (!dockerRunning(docker, dockerEnv(docker))) return DOCKER_STOPPED;
   return `Docker Desktop is running now. To start Deckwright, ${AGAIN}.`;
 }
 
@@ -208,10 +207,15 @@ function pullInBackground(docker, env, dir) {
   const log = fs.openSync(logFile, "w");
   const child = spawn(docker, ["pull", IMAGE], { detached: true, stdio: ["ignore", log, log], env, windowsHide: true });
   fs.closeSync(log);
+  const pidFile = path.join(dir, "download.pid");
+  const ended = () => {
+    pull.exited = true;
+    fs.rmSync(pidFile, { force: true }); // so a later start cannot mistake a reused pid for this download
+  };
   pull.child = child;
-  child.on("error", () => { pull.exited = true; });
-  child.on("exit", () => { pull.exited = true; });
-  if (child.pid) fs.writeFileSync(path.join(dir, "download.pid"), String(child.pid));
+  child.on("error", ended);
+  child.on("exit", ended);
+  if (child.pid) fs.writeFileSync(pidFile, String(child.pid));
   child.unref();
   return failed;
 }
@@ -222,7 +226,9 @@ function main() {
       + "Deckwright GitHub Release and install it again.");
   }
   const docker = findDocker();
-  if (!docker || !dockerRunning(docker, dockerEnv(docker))) return setupServer(dockerStatus);
+  if (!docker) return setupServer(dockerStatus);
+  // The first answer reuses this check, so a stuck Docker delays the reply to Claude only once.
+  if (!dockerRunning(docker, dockerEnv(docker))) return setupServer(dockerStatus, DOCKER_STOPPED);
   const env = dockerEnv(docker);
 
   const dir = folder();
