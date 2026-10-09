@@ -73,7 +73,7 @@ function pullInBackground(docker, env, dir) {
   } catch {
     // no download running
   }
-  const log = fs.openSync(path.join(dir, "download.log"), "a");
+  const log = fs.openSync(path.join(dir, "download.log"), "w");
   const pull = spawn(docker, ["pull", IMAGE], { detached: true, stdio: ["ignore", log, log], env, windowsHide: true });
   fs.closeSync(log);
   fs.writeFileSync(pidFile, String(pull.pid));
@@ -110,6 +110,9 @@ function main() {
     pullInBackground(docker, env, dir);
     fail("Deckwright is downloading its image (about 1 GB, first start only). Wait a few minutes, then restart "
       + `Claude. Progress is in ${path.join(dir, "download.log")}.`);
+  }
+  for (const name of ["download.log", "download.pid"]) {
+    fs.rmSync(path.join(dir, name), { force: true }); // the image is here, so the download notes are done
   }
 
   const args = [
