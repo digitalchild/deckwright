@@ -1,0 +1,9 @@
+extension/launch.js
+  ai_agent 187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2f936b4c911ddf67aa6c084dac60c671033b7cba",
+  "prompts": {}
+}
