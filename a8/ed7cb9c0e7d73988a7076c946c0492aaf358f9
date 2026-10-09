@@ -1,0 +1,28 @@
+tests/test_build_mcpb.py
+  s_1576e7138db6fb::t_666de6918ab975 1-42
+.github/workflows/ci.yml
+  s_1576e7138db6fb::t_666de6918ab975 22
+scripts/build_mcpb.py
+  s_1576e7138db6fb::t_fbce3732a6c672 3-8,11,19,92-118,122,128-141
+extension/launch.js
+  s_1576e7138db6fb::t_fbce3732a6c672 76-78
+  s_1576e7138db6fb::t_03d4c6e7093a63 1-75,79-118
+.github/workflows/docker.yml
+  s_1576e7138db6fb::t_30f19744c9a432 58-59,161-186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a8ed7cb9c0e7d73988a7076c946c0492aaf358f9",
+  "prompts": {},
+  "sessions": {
+    "s_1576e7138db6fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0300a77b-371b-4ee2-943c-6a15fb2af254",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jamie Madden <digitalchild@gmail.com>"
+    }
+  }
+}
