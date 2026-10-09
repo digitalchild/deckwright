@@ -107,8 +107,8 @@ def container_manifest(version: str) -> dict:
             "type": "directory",
             "title": "Deckwright folder",
             "description": "Holds your decks (Decks), templates (Templates) and new .pptx files to add (Inbox). "
-                           "Deckwright can see only this folder.",
-            "default": "${HOME}/Deckwright",
+                           "Deckwright can see only this folder. Leave empty for a Deckwright folder in your "
+                           "home folder.",
             "required": False,
         }
     }

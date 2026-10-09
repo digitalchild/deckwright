@@ -27,7 +27,11 @@ function fail(message) {
 }
 
 function folder() {
-  const raw = (process.env.DECKWRIGHT_FOLDER || "").trim() || path.join(os.homedir(), "Deckwright");
+  let raw = (process.env.DECKWRIGHT_FOLDER || "").trim();
+  // Claude Desktop passes "${user_config.folder}" as is when the setting is empty, and does not expand
+  // ${HOME} in a value.
+  raw = raw.replace(/\$\{HOME\}/g, os.homedir());
+  if (!raw || raw.includes("${")) raw = path.join(os.homedir(), "Deckwright");
   const expanded = raw === "~" || raw.startsWith("~/") || raw.startsWith("~\\")
     ? path.join(os.homedir(), raw.slice(1)) : raw;
   return path.resolve(expanded);

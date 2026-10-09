@@ -33,6 +33,8 @@ def test_container_extension_pins_the_image(tmp_path):
     assert manifest["server"]["type"] == "node"
     assert manifest["server"]["mcp_config"]["env"] == {"DECKWRIGHT_FOLDER": "${user_config.folder}"}
     assert manifest["user_config"]["folder"]["type"] == "directory"
+    # Claude Desktop does not expand ${HOME} in a default, so the launcher picks the default folder.
+    assert "default" not in manifest["user_config"]["folder"]
     assert f'"{REF}"' in launcher and '"__IMAGE__"' not in launcher
 
 
