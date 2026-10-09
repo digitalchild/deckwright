@@ -1,0 +1,21 @@
+extension/launch.js
+  s_1576e7138db6fb::t_d9f1213c28283a 136
+tests/test_launcher.py
+  s_1576e7138db6fb::t_d9f1213c28283a 20-21,26-27,50-53,59-67,69,83-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5dc4bf2842e5121d9ec8a991137f0a3f7abd1c15",
+  "prompts": {},
+  "sessions": {
+    "s_1576e7138db6fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0300a77b-371b-4ee2-943c-6a15fb2af254",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jamie Madden <digitalchild@gmail.com>"
+    }
+  }
+}
