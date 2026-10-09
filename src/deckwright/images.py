@@ -32,7 +32,8 @@ def _allowed_roots() -> list[Path]:
 
 def check_local_path(source: str, allow_local: bool) -> Path:
     """Resolve a local path; untrusted callers may only read inside DECKWRIGHT_ASSET_DIRS."""
-    path = Path(hostpaths.to_container(source)).expanduser().resolve()
+    # Only trusted callers get the host folder mapping, and its errors that name the folder.
+    path = Path(hostpaths.to_container(source) if allow_local else source).expanduser().resolve()
     if not allow_local and not any(path.is_relative_to(r) for r in _allowed_roots()):
         raise PermissionError("local file paths are disabled; use a URL or data URI, or set DECKWRIGHT_ASSET_DIRS")
     return path
