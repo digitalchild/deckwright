@@ -54,9 +54,17 @@ function findDocker() {
   return null;
 }
 
-function run(docker, args, timeout) {
-  // Output goes to stderr, never stdout.
-  return spawnSync(docker, args, { stdio: ["ignore", process.stderr, process.stderr], timeout });
+// Docker's helpers (docker-credential-desktop and others) sit next to docker, so put its folder on PATH.
+function dockerEnv(docker) {
+  return { ...process.env, PATH: [path.dirname(docker), process.env.PATH || ""].filter(Boolean).join(path.delimiter) };
+}
+
+// The first download is about 1 GB, longer than Claude waits for a server to start. Run it on its own,
+// so it keeps going after Claude gives up on this launch, and log it in the folder.
+function pullInBackground(docker, env, dir) {
+  const log = fs.openSync(path.join(dir, "download.log"), "a");
+  const pull = spawn(docker, ["pull", IMAGE], { detached: true, stdio: ["ignore", log, log], env, windowsHide: true });
+  pull.unref();
 }
 
 function main() {
@@ -68,13 +76,16 @@ function main() {
     fail("Docker is not installed. Install Docker Desktop from https://www.docker.com/products/docker-desktop/, "
       + "start it, then restart Claude.");
   }
-  if (spawnSync(docker, ["info"], { stdio: "ignore", timeout: 20000 }).status !== 0) {
+  const env = dockerEnv(docker);
+  if (spawnSync(docker, ["info"], { stdio: "ignore", timeout: 20000, env }).status !== 0) {
     fail("Docker is not running. Start Docker Desktop, wait until it says it is running, then restart Claude.");
   }
 
   const dir = folder();
-  if (dir.includes(",")) {
-    fail(`the Deckwright folder path cannot contain a comma: ${dir}. Pick another folder in the extension settings.`);
+  if (/[,"]/.test(dir)) {
+    // docker reads the --mount value as CSV.
+    fail(`the Deckwright folder path cannot contain a comma or a double quote: ${dir}. `
+      + "Pick another folder in the extension settings.");
   }
   try {
     for (const name of FOLDERS) fs.mkdirSync(path.join(dir, name), { recursive: true });
@@ -82,32 +93,30 @@ function main() {
     fail(`cannot create the Deckwright folder ${dir}: ${err.message}`);
   }
 
-  if (spawnSync(docker, ["image", "inspect", IMAGE], { stdio: "ignore" }).status !== 0) {
-    say(`downloading ${IMAGE} (about 1 GB, first start only)...`);
-    if (run(docker, ["pull", IMAGE], 30 * 60 * 1000).status !== 0) {
-      fail("could not download the Deckwright image. Check your internet connection, then restart Claude.");
-    }
+  if (spawnSync(docker, ["image", "inspect", IMAGE], { stdio: "ignore", env }).status !== 0) {
+    pullInBackground(docker, env, dir);
+    fail("Deckwright is downloading its image (about 1 GB, first start only). Wait a few minutes, then restart "
+      + `Claude. Progress is in ${path.join(dir, "download.log")}.`);
   }
 
   const args = [
-    "run", "-i", "--rm", "--pull", "never", "--no-healthcheck",
+    // --init: the server runs as PID 1 otherwise, which ignores SIGTERM.
+    "run", "-i", "--rm", "--init", "--pull", "never", "--no-healthcheck",
     // Same hardening as the server image: read-only root, no capabilities, no privilege gain, limits.
     "--read-only", "--tmpfs", "/tmp:size=512m", "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges:true", "--pids-limit", "512", "--memory", "2g",
     // The only folder the container can see. --mount, because -v misreads a Windows drive letter.
     "--mount", `type=bind,source=${dir},target=/data`,
     "-e", `DECKWRIGHT_HOST_DIR=${dir}`,
+    "-e", `DECKWRIGHT_HOST_OS=${process.platform}`,
+    "-e", `DECKWRIGHT_HOST_HOME=${os.homedir()}`,
     "-e", "DECKWRIGHT_OUTPUT_DIR=/data/Decks",
     "-e", "DECKWRIGHT_PACKS_DIR=/data/Templates",
     "--label", "deckwright=desktop",
   ];
-  if (process.platform === "linux" && process.getuid) {
-    // Linux bind mounts keep host ownership, so write files as the person, not as the image user.
-    args.push("--user", `${process.getuid()}:${process.getgid()}`);
-  }
   args.push(IMAGE, "deckwright", "mcp");
 
-  const child = spawn(docker, args, { stdio: "inherit" });
+  const child = spawn(docker, args, { stdio: "inherit", env });
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.on(signal, () => child.kill(signal));
   }

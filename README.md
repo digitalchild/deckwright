@@ -252,7 +252,7 @@ For remote use, with Google sign-in and a public URL, see [Run with Docker](#run
 4. Pick a folder. The default is `~/Deckwright`.
 5. Start a chat and ask for a deck.
 
-The first start downloads the image, about 1 GB. If Claude reports a timeout, wait for the download to finish, then restart Claude once.
+The first start downloads the image, about 1 GB. Claude shows Deckwright as failed while it downloads. Wait a few minutes, then restart Claude. `download.log` in your folder shows the progress.
 
 Docker Desktop is free for small companies, education and personal use. Larger companies need a paid plan.
 
@@ -283,11 +283,11 @@ Copy the pack's folder from your `Templates/` to your teammate's `Templates/`.
 
 ### Claude Code, with the container
 
-Create the folder, then add the server with one command:
+Create the folder, then add the server with one command. On Linux, set `DECKWRIGHT_HOST_OS=linux`.
 
 ```bash
 mkdir -p ~/Deckwright/Decks ~/Deckwright/Templates ~/Deckwright/Inbox
-claude mcp add deckwright -- docker run -i --rm --read-only --tmpfs /tmp:size=512m --cap-drop ALL --security-opt no-new-privileges:true --mount type=bind,source=$HOME/Deckwright,target=/data -e DECKWRIGHT_HOST_DIR=$HOME/Deckwright -e DECKWRIGHT_OUTPUT_DIR=/data/Decks -e DECKWRIGHT_PACKS_DIR=/data/Templates ghcr.io/digitalchild/deckwright:latest deckwright mcp
+claude mcp add deckwright -- docker run -i --rm --init --read-only --tmpfs /tmp:size=512m --cap-drop ALL --security-opt no-new-privileges:true --mount type=bind,source=$HOME/Deckwright,target=/data -e DECKWRIGHT_HOST_DIR=$HOME/Deckwright -e DECKWRIGHT_HOST_OS=darwin -e DECKWRIGHT_HOST_HOME=$HOME -e DECKWRIGHT_OUTPUT_DIR=/data/Decks -e DECKWRIGHT_PACKS_DIR=/data/Templates ghcr.io/digitalchild/deckwright:latest deckwright mcp
 ```
 
 ### Build it yourself

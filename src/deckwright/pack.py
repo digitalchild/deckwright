@@ -321,13 +321,14 @@ def packs_dir() -> Path:
 
 
 def search_paths() -> list[Path]:
-    """DECKWRIGHT_TEMPLATES entries, then packs_dir() (~/.config/deckwright/templates), then the built-in templates folder.
+    """DECKWRIGHT_TEMPLATES entries, then packs_dir() and ~/.config/deckwright/templates, then the built-in templates folder.
 
     Each entry is a pack folder or a folder of packs.
     """
     raw = os.environ.get("DECKWRIGHT_TEMPLATES", "")
     paths = [Path(p).expanduser() for p in raw.split(os.pathsep) if p]
-    return [*paths, packs_dir(), Path(__file__).parent / "templates"]
+    defaults = [packs_dir(), CONFIG_DIR / "templates"]  # the old folder stays found when DECKWRIGHT_PACKS_DIR moves
+    return [*paths, *dict.fromkeys(defaults), Path(__file__).parent / "templates"]
 
 
 def discover() -> dict[str, Path]:

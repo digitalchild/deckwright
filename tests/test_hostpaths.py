@@ -105,3 +105,37 @@ def test_mcp_returns_host_paths_and_says_where_files_go(output_dir, monkeypatch)
     assert f"Deckwright folder, {HOST}" in instructions
     assert built["path"].startswith(f"{HOST}/") and built["path"].endswith(".pptx")
     assert refused.is_error and "outside your Deckwright folder" in refused.content[0].text
+
+
+def test_tilde_and_case_on_macos(mapped, monkeypatch):
+    monkeypatch.setenv("DECKWRIGHT_HOST_OS", "darwin")
+    monkeypatch.setenv("DECKWRIGHT_HOST_HOME", "/Users/sam")
+    assert hostpaths.to_container("~/Deckwright/Inbox/a.pptx") == str(mapped / "Inbox" / "a.pptx")
+    assert hostpaths.to_container("/users/SAM/deckwright/Inbox/a.pptx") == str(mapped / "Inbox" / "a.pptx")
+    with pytest.raises(hostpaths.HostPathError):
+        hostpaths.to_container("~/Downloads/a.pptx")
+
+
+def test_case_matters_on_linux(mapped, monkeypatch):
+    monkeypatch.setenv("DECKWRIGHT_HOST_OS", "linux")
+    with pytest.raises(hostpaths.HostPathError):
+        hostpaths.to_container("/users/sam/deckwright/Inbox/a.pptx")
+
+
+def test_backslash_in_a_macos_folder_is_not_windows(mapped, monkeypatch):
+    monkeypatch.setenv("DECKWRIGHT_HOST_OS", "darwin")
+    monkeypatch.setenv("DECKWRIGHT_HOST_DIR", "/Users/sam/My\\Decks")
+    assert hostpaths.to_container("/Users/sam/My\\Decks/Inbox/a.pptx") == str(mapped / "Inbox" / "a.pptx")
+    assert hostpaths.to_host(str(mapped / "Decks" / "a.pptx")) == "/Users/sam/My\\Decks/Decks/a.pptx"
+
+
+def test_paths_inside_messages_are_mapped(mapped):
+    warning = f"cannot read {mapped}/Inbox/logo.png: not an image; also {mapped}-old/x and {mapped}x"
+    assert hostpaths.to_host([warning]) == [f"cannot read {HOST}/Inbox/logo.png: not an image; also "
+                                            f"{mapped}-old/x and {mapped}x"]
+
+
+def test_old_packs_folder_stays_found(monkeypatch, tmp_path):
+    monkeypatch.setenv("DECKWRIGHT_PACKS_DIR", str(tmp_path / "Templates"))
+    paths = pack.search_paths()
+    assert paths.index(tmp_path / "Templates") < paths.index(pack.CONFIG_DIR / "templates")

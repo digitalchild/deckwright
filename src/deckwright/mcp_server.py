@@ -246,7 +246,7 @@ def update_template(template: str, pptx_path: str | None = None) -> dict[str, An
 
 @_resource("deckwright://templates", mime_type="application/json")
 def templates_resource() -> str:
-    return json.dumps(service.list_templates(), indent=1)
+    return json.dumps(_on_host(service.list_templates), indent=1)
 
 
 @_resource("deckwright://templates/{template}/layouts", mime_type="application/json")
