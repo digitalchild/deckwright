@@ -1,0 +1,9 @@
+src/deckwright/images.py
+  ai_agent 35-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5fdacde559f0c4160a3f75eb6b027a2cbee631ce",
+  "prompts": {}
+}
