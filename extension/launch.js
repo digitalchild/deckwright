@@ -13,8 +13,10 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-// The release build replaces this with the image pinned by digest.
-const IMAGE = process.env.DECKWRIGHT_IMAGE || "__IMAGE__";
+// The release build replaces this with the image pinned by digest. DECKWRIGHT_IMAGE is for testing the
+// unbuilt launcher only, so nothing in the environment can change the image a built extension runs.
+const BUILT_IMAGE = "__IMAGE__";
+const IMAGE = BUILT_IMAGE.startsWith("__") ? process.env.DECKWRIGHT_IMAGE || BUILT_IMAGE : BUILT_IMAGE;
 const FOLDERS = ["Decks", "Templates", "Inbox"];
 
 function say(message) {
