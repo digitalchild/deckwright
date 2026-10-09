@@ -80,8 +80,8 @@ def to_host(value: Any) -> Any:
     if host is None:
         return value
     data = str(data_dir().resolve())
-    # The data folder, then the rest of the path up to a space or quote, inside a message.
-    return _map(value, host, data, re.compile(re.escape(data) + r"(?![\w.-])(/[^\s'\"]*)?"))
+    # A standalone data folder path (not part of a URL or a longer path), up to a space or quote.
+    return _map(value, host, data, re.compile(r"(?<![\w/.:~-])" + re.escape(data) + r"(?![\w.-])(/[^\s'\"]*)?"))
 
 
 def _map(value: Any, host: PurePath, data: str, inside_text: re.Pattern[str]) -> Any:

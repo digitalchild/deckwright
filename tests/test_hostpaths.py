@@ -145,3 +145,9 @@ def test_windows_paths_inside_messages(mapped, monkeypatch):
     monkeypatch.setenv("DECKWRIGHT_HOST_DIR", r"C:\Users\Sam\Deckwright")
     assert (hostpaths.to_host(f"cannot read {mapped}/Inbox/logo.png: bad")
             == r"cannot read C:\Users\Sam\Deckwright\Inbox\logo.png: bad")
+
+
+def test_urls_and_longer_paths_are_not_rewritten(mapped):
+    text = f"see https://example.com{mapped}/img.png and /srv{mapped}/x; real: {mapped}/Decks/a.pptx"
+    assert hostpaths.to_host(text) == (f"see https://example.com{mapped}/img.png and /srv{mapped}/x; "
+                                       f"real: {HOST}/Decks/a.pptx")
