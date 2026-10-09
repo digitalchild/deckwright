@@ -28,7 +28,8 @@ function fail(message) {
 
 function folder() {
   const raw = (process.env.DECKWRIGHT_FOLDER || "").trim() || path.join(os.homedir(), "Deckwright");
-  const expanded = raw === "~" || raw.startsWith("~/") ? path.join(os.homedir(), raw.slice(1)) : raw;
+  const expanded = raw === "~" || raw.startsWith("~/") || raw.startsWith("~\\")
+    ? path.join(os.homedir(), raw.slice(1)) : raw;
   return path.resolve(expanded);
 }
 
@@ -62,8 +63,17 @@ function dockerEnv(docker) {
 // The first download is about 1 GB, longer than Claude waits for a server to start. Run it on its own,
 // so it keeps going after Claude gives up on this launch, and log it in the folder.
 function pullInBackground(docker, env, dir) {
+  const pidFile = path.join(dir, "download.pid");
+  try {
+    process.kill(Number(fs.readFileSync(pidFile, "utf8")), 0);
+    return; // a download from an earlier start is still running
+  } catch {
+    // no download running
+  }
   const log = fs.openSync(path.join(dir, "download.log"), "a");
   const pull = spawn(docker, ["pull", IMAGE], { detached: true, stdio: ["ignore", log, log], env, windowsHide: true });
+  fs.closeSync(log);
+  fs.writeFileSync(pidFile, String(pull.pid));
   pull.unref();
 }
 
