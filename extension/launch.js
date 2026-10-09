@@ -31,10 +31,13 @@ function fail(message) {
   process.exit(1);
 }
 
-// A minimal MCP server (newline-delimited JSON-RPC over stdio) with one tool, setup_status. status() returns
-// the current text, so a later call can report that the download has finished.
+const AGAIN = "quit Claude completely and open it again";
+
+// A minimal MCP server (newline-delimited JSON-RPC over stdio) with one tool, setup_status. status() checks
+// again on each call, so the tool can report that Docker now runs or that the download has finished.
 function setupServer(status) {
-  say(status());
+  const first = status();
+  say(first);
   const tool = {
     name: "setup_status",
     description: "Deckwright is not ready yet. Call this to learn why and what the user must do, then tell the user.",
@@ -47,18 +50,20 @@ function setupServer(status) {
           protocolVersion: (req.params && req.params.protocolVersion) || "2025-06-18",
           capabilities: { tools: {} },
           serverInfo: { name: "deckwright", version: "setup" },
-          instructions: `Deckwright is not ready yet. ${status()} When the user asks for Deckwright or a deck, `
-            + "call setup_status and tell them what it says, in plain words.",
+          instructions: `Deckwright is not ready yet. ${first} When the user asks for Deckwright or a deck, call `
+            + "setup_status (it checks again) and tell them what it says, in plain words.",
         };
       case "ping":
         return {};
       case "tools/list":
         return { tools: [tool] };
-      case "tools/call":
-        if (!req.params || req.params.name !== tool.name) {
-          return { error: { code: -32602, message: `unknown tool; Deckwright has only ${tool.name} until it is ready.` } };
-        }
-        return { content: [{ type: "text", text: status() }] };
+      case "tools/call": {
+        const name = req.params && req.params.name;
+        if (name === tool.name) return { content: [{ type: "text", text: status() }] };
+        // A tool from an earlier session: say why it is missing instead of a bare protocol error.
+        return { content: [{ type: "text", text: `Deckwright is not ready yet, so ${name} is not available. `
+          + status() }], isError: true };
+      }
       case "prompts/list":
         return { prompts: [] };
       case "resources/list":
@@ -87,25 +92,54 @@ function setupServer(status) {
       const result = answer(req);
       const reply = result === undefined
         ? { error: { code: -32601, message: `Deckwright is not ready yet, so ${req.method} is not available.` } }
-        : result.error ? result : { result };
+        : { result };
       process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: req.id, ...reply }) + "\n");
     }
   });
   process.stdin.on("end", () => process.exit(0));
+  process.stdout.on("error", () => process.exit(0)); // Claude closed the connection
 }
 
+// Every Docker call has a time limit, so a stuck Docker cannot freeze the setup server.
 function imagePresent(docker, env) {
-  return spawnSync(docker, ["image", "inspect", IMAGE], { stdio: "ignore", env }).status === 0;
+  return spawnSync(docker, ["image", "inspect", IMAGE], { stdio: "ignore", timeout: 10000, env }).status === 0;
 }
 
-let lastFailure = ""; // why the previous download ended without the image, kept for every later status
+function dockerRunning(docker, env) {
+  return spawnSync(docker, ["info"], { stdio: "ignore", timeout: 20000, env }).status === 0;
+}
 
-function downloadStatus(docker, env, dir) {
-  if (imagePresent(docker, env)) return "The download is done. Quit Claude completely and open it again to start Deckwright.";
-  lastFailure = pullInBackground(docker, env, dir) || lastFailure; // starts a new download only when none is running
-  return (lastFailure ? `The last download did not finish (${lastFailure}), so Deckwright started it again. ` : "")
-    + "Deckwright is downloading its image (about 1 GB, first start only). Wait a few minutes, then quit Claude "
-    + `completely and open it again. Progress is in ${path.join(dir, "download.log")}.`;
+function dockerStatus() {
+  const docker = findDocker();
+  if (!docker) {
+    return "Docker Desktop is not installed. Install it from https://www.docker.com/products/docker-desktop/, "
+      + `start it, then ${AGAIN}.`;
+  }
+  if (!dockerRunning(docker, dockerEnv(docker))) {
+    return `Docker Desktop is not running. Start it, wait until it says it is running, then ${AGAIN}.`;
+  }
+  return `Docker Desktop is running now. To start Deckwright, ${AGAIN}.`;
+}
+
+function lastLine(file) {
+  try {
+    return fs.readFileSync(file, "utf8").trim().split("\n").pop().trim();
+  } catch {
+    return "";
+  }
+}
+
+// earlier: why a download from an earlier start ended without the image ("" when there was none).
+function downloadStatus(docker, env, dir, earlier) {
+  if (imagePresent(docker, env)) return `The download is done. To start Deckwright, ${AGAIN}.`;
+  const log = path.join(dir, "download.log");
+  if (!pullRunning(dir)) {
+    const why = lastLine(log);
+    return `The download stopped${why ? ` (${why})` : ""}. Check your internet connection, then ${AGAIN} to try again.`;
+  }
+  return (earlier ? `The last download did not finish (${earlier}), so Deckwright started it again. ` : "")
+    + `Deckwright is downloading its image (about 1 GB, first start only). Wait a few minutes, then ${AGAIN}. `
+    + `Progress is in ${log}.`;
 }
 
 function folder() {
@@ -147,32 +181,38 @@ function dockerEnv(docker) {
 }
 
 // The first download is about 1 GB, longer than Claude waits for a server to start. Run it on its own,
-// so it keeps going after Claude gives up on this launch, and log it in the folder. Returns the last line
-// of an earlier download that ended without the image, so the person can see why.
-function pullInBackground(docker, env, dir) {
+// so it keeps going after Claude gives up on this launch, and log it in the folder.
+const pull = { child: null, exited: false }; // the download this launch started, if any
+
+// A pid file older than this is stale: the pull has ended, and its pid may belong to another process.
+const PULL_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+
+function pullRunning(dir) {
+  if (pull.child) return !pull.exited;
   const pidFile = path.join(dir, "download.pid");
+  try {
+    if (Date.now() - fs.statSync(pidFile).mtimeMs >= PULL_MAX_AGE_MS) return false;
+    process.kill(Number(fs.readFileSync(pidFile, "utf8")), 0);
+    return true; // a download from an earlier start is still running
+  } catch {
+    return false;
+  }
+}
+
+// Starts the download unless one is running. Returns the last line of an earlier download that ended
+// without the image, so the person can see why.
+function pullInBackground(docker, env, dir) {
+  if (pullRunning(dir)) return "";
   const logFile = path.join(dir, "download.log");
-  try {
-    // A pid file older than an hour is stale: the pull has ended, and its pid may belong to another process.
-    if (Date.now() - fs.statSync(pidFile).mtimeMs < 60 * 60 * 1000) {
-      process.kill(Number(fs.readFileSync(pidFile, "utf8")), 0);
-      return ""; // a download from an earlier start is still running
-    }
-  } catch {
-    // no download running
-  }
-  let failed = "";
-  try {
-    failed = fs.readFileSync(logFile, "utf8").trim().split("\n").pop();
-  } catch {
-    // no earlier download
-  }
+  const failed = lastLine(logFile);
   const log = fs.openSync(logFile, "w");
-  const pull = spawn(docker, ["pull", IMAGE], { detached: true, stdio: ["ignore", log, log], env, windowsHide: true });
+  const child = spawn(docker, ["pull", IMAGE], { detached: true, stdio: ["ignore", log, log], env, windowsHide: true });
   fs.closeSync(log);
-  pull.on("error", () => {}); // the message below already tells the person to check the log
-  if (pull.pid) fs.writeFileSync(pidFile, String(pull.pid));
-  pull.unref();
+  pull.child = child;
+  child.on("error", () => { pull.exited = true; });
+  child.on("exit", () => { pull.exited = true; });
+  if (child.pid) fs.writeFileSync(path.join(dir, "download.pid"), String(child.pid));
+  child.unref();
   return failed;
 }
 
@@ -182,15 +222,8 @@ function main() {
       + "Deckwright GitHub Release and install it again.");
   }
   const docker = findDocker();
-  if (!docker) {
-    return setupServer(() => "Docker Desktop is not installed. Install it from "
-      + "https://www.docker.com/products/docker-desktop/, start it, then quit Claude completely and open it again.");
-  }
+  if (!docker || !dockerRunning(docker, dockerEnv(docker))) return setupServer(dockerStatus);
   const env = dockerEnv(docker);
-  if (spawnSync(docker, ["info"], { stdio: "ignore", timeout: 20000, env }).status !== 0) {
-    return setupServer(() => "Docker Desktop is not running. Start it, wait until it says it is running, then quit "
-      + "Claude completely and open it again.");
-  }
 
   const dir = folder();
   if (/[,"]/.test(dir)) {
@@ -206,7 +239,8 @@ function main() {
   }
 
   if (!imagePresent(docker, env)) {
-    return setupServer(() => downloadStatus(docker, env, dir));
+    const earlier = pullInBackground(docker, env, dir);
+    return setupServer(() => downloadStatus(docker, env, dir, earlier));
   }
   for (const name of ["download.log", "download.pid"]) {
     fs.rmSync(path.join(dir, name), { force: true }); // the image is here, so the download notes are done

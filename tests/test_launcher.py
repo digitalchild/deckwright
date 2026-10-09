@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,22 +13,67 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 LAUNCHER = Path(__file__).resolve().parents[1] / "extension" / "launch.js"
+NODE = shutil.which("node")
+
+pytestmark = pytest.mark.skipif(NODE is None or sys.platform == "win32", reason="needs Node.js and a POSIX shell")
+
+# Stands in for docker: `info` works unless FAKE_INFO_FAIL is set, no image is present, and a pull fails.
+FAKE_DOCKER = """#!/bin/sh
+case "$1" in
+  info) [ -z "$FAKE_INFO_FAIL" ] ;;
+  image) exit 1 ;;
+  pull) sleep "${FAKE_PULL_SECONDS:-0}"; echo "no route to host"; exit 1 ;;
+  *) exit 1 ;;
+esac
+"""
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="needs Node.js")
-def test_unbuilt_launcher_explains_itself_over_mcp(tmp_path):
+def _env(tmp_path: Path, **extra: str) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k != "DECKWRIGHT_IMAGE"}
-    env["DECKWRIGHT_FOLDER"] = str(tmp_path)
+    env["DECKWRIGHT_FOLDER"] = str(tmp_path / "Deckwright")
+    env.update(extra)
+    return env
 
+
+def _with_fake_docker(tmp_path: Path, **extra: str) -> dict[str, str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text(FAKE_DOCKER)
+    docker.chmod(0o755)
+    return _env(tmp_path, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}", DECKWRIGHT_IMAGE="example/deckwright:1",
+                **extra)
+
+
+def _session(env: dict[str, str], wait: float = 0):
     async def run():
-        params = StdioServerParameters(command="node", args=[str(LAUNCHER)], env=env)
-        async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
+        async with stdio_client(StdioServerParameters(command=NODE, args=[str(LAUNCHER)], env=env)) as (r, w), \
+                ClientSession(r, w) as s:
             init = await s.initialize()
             tools = [t.name for t in (await s.list_tools()).tools]
-            status = await s.call_tool("setup_status", {})
-            return init.instructions, tools, status
+            first = await s.call_tool("setup_status", {})
+            await asyncio.sleep(wait)
+            later = await s.call_tool("setup_status", {})
+            other = await s.call_tool("create_presentation", {})
+            return init.instructions, tools, first.content[0].text, later.content[0].text, other
 
-    instructions, tools, status = asyncio.run(run())
+    return asyncio.run(run())
+
+
+def test_unbuilt_launcher_explains_itself_over_mcp(tmp_path):
+    instructions, tools, first, _, other = _session(_env(tmp_path))
     assert instructions.startswith("Deckwright is not ready yet.")
     assert tools == ["setup_status"]
-    assert not status.is_error and "built without an image" in status.content[0].text
+    assert "built without an image" in first
+    assert other.is_error and "create_presentation is not available" in other.content[0].text
+
+
+def test_download_status_follows_the_pull(tmp_path):
+    _, _, first, later, _ = _session(_with_fake_docker(tmp_path, FAKE_PULL_SECONDS="1"), wait=2.5)
+    assert first.startswith("Deckwright is downloading its image")
+    assert later.startswith("The download stopped (no route to host)")
+
+
+def test_docker_not_running(tmp_path):
+    _, _, first, _, _ = _session(_with_fake_docker(tmp_path, FAKE_INFO_FAIL="1"))
+    assert first.startswith("Docker Desktop is not running.")
