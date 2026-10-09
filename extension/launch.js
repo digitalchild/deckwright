@@ -55,7 +55,10 @@ function setupServer(status) {
       case "tools/list":
         return { tools: [tool] };
       case "tools/call":
-        return req.params && req.params.name === tool.name ? { content: [{ type: "text", text: status() }] } : undefined;
+        if (!req.params || req.params.name !== tool.name) {
+          return { error: { code: -32602, message: `unknown tool; Deckwright has only ${tool.name} until it is ready.` } };
+        }
+        return { content: [{ type: "text", text: status() }] };
       case "prompts/list":
         return { prompts: [] };
       case "resources/list":
@@ -84,7 +87,7 @@ function setupServer(status) {
       const result = answer(req);
       const reply = result === undefined
         ? { error: { code: -32601, message: `Deckwright is not ready yet, so ${req.method} is not available.` } }
-        : { result };
+        : result.error ? result : { result };
       process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: req.id, ...reply }) + "\n");
     }
   });
@@ -95,10 +98,12 @@ function imagePresent(docker, env) {
   return spawnSync(docker, ["image", "inspect", IMAGE], { stdio: "ignore", env }).status === 0;
 }
 
+let lastFailure = ""; // why the previous download ended without the image, kept for every later status
+
 function downloadStatus(docker, env, dir) {
   if (imagePresent(docker, env)) return "The download is done. Quit Claude completely and open it again to start Deckwright.";
-  const failed = pullInBackground(docker, env, dir); // starts a new download only when none is running
-  return (failed ? `The last download did not finish (${failed}), so Deckwright started it again. ` : "")
+  lastFailure = pullInBackground(docker, env, dir) || lastFailure; // starts a new download only when none is running
+  return (lastFailure ? `The last download did not finish (${lastFailure}), so Deckwright started it again. ` : "")
     + "Deckwright is downloading its image (about 1 GB, first start only). Wait a few minutes, then quit Claude "
     + `completely and open it again. Progress is in ${path.join(dir, "download.log")}.`;
 }
