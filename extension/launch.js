@@ -133,6 +133,7 @@ function downloadStatus(docker, env, dir, earlier) {
   if (imagePresent(docker, env)) return `The download is done. To start Deckwright, ${AGAIN}.`;
   const log = path.join(dir, "download.log");
   if (!pullRunning(dir)) {
+    if (!dockerRunning(docker, env)) return DOCKER_STOPPED; // Docker quit, not the network
     const why = lastLine(log);
     return `The download stopped${why ? ` (${why})` : ""}. Check your internet connection, then ${AGAIN} to try again.`;
   }

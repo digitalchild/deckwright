@@ -17,12 +17,14 @@ NODE = shutil.which("node")
 
 pytestmark = pytest.mark.skipif(NODE is None or sys.platform == "win32", reason="needs Node.js and a POSIX shell")
 
-# Stands in for docker: `info` works unless FAKE_INFO_FAIL is set, no image is present, and a pull fails.
+# Stands in for docker: `info` works unless FAKE_INFO_FAIL is set, no image is present, and a pull fails
+# (once the file FAKE_PULL_UNTIL exists, when it is set).
 FAKE_DOCKER = """#!/bin/sh
 case "$1" in
   info) [ -z "$FAKE_INFO_FAIL" ] ;;
   image) exit 1 ;;
-  pull) sleep "${FAKE_PULL_SECONDS:-0}"; echo "no route to host"; exit 1 ;;
+  pull) while [ -n "$FAKE_PULL_UNTIL" ] && [ ! -f "$FAKE_PULL_UNTIL" ]; do sleep 0.1; done
+        echo "no route to host"; exit 1 ;;
   *) exit 1 ;;
 esac
 """
@@ -45,17 +47,26 @@ def _with_fake_docker(tmp_path: Path, **extra: str) -> dict[str, str]:
                 **extra)
 
 
-def _session(env: dict[str, str], wait: float = 0):
+def _session(env: dict[str, str], release: Path | None = None):
+    """Run a session. With release, create that file after the first status (the fake pull then fails) and
+    ask again until the status changes."""
+
     async def run():
         async with stdio_client(StdioServerParameters(command=NODE, args=[str(LAUNCHER)], env=env)) as (r, w), \
                 ClientSession(r, w) as s:
             init = await s.initialize()
             tools = [t.name for t in (await s.list_tools()).tools]
-            first = await s.call_tool("setup_status", {})
-            await asyncio.sleep(wait)
-            later = await s.call_tool("setup_status", {})
+            first = (await s.call_tool("setup_status", {})).content[0].text
+            later = first
+            if release is not None:
+                release.touch()
+                for _ in range(100):
+                    later = (await s.call_tool("setup_status", {})).content[0].text
+                    if later != first:
+                        break
+                    await asyncio.sleep(0.1)
             other = await s.call_tool("create_presentation", {})
-            return init.instructions, tools, first.content[0].text, later.content[0].text, other
+            return init.instructions, tools, first, later, other
 
     return asyncio.run(run())
 
@@ -69,7 +80,8 @@ def test_unbuilt_launcher_explains_itself_over_mcp(tmp_path):
 
 
 def test_download_status_follows_the_pull(tmp_path):
-    _, _, first, later, _ = _session(_with_fake_docker(tmp_path, FAKE_PULL_SECONDS="1"), wait=2.5)
+    release = tmp_path / "release"
+    _, _, first, later, _ = _session(_with_fake_docker(tmp_path, FAKE_PULL_UNTIL=str(release)), release)
     assert first.startswith("Deckwright is downloading its image")
     assert later.startswith("The download stopped (no route to host)")
     assert not (tmp_path / "Deckwright" / "download.pid").exists()
