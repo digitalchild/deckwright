@@ -283,11 +283,11 @@ Copy the pack's folder from your `Templates/` to your teammate's `Templates/`.
 
 ### Claude Code, with the container
 
-Create the folder, then add the server with one command. On Linux, set `DECKWRIGHT_HOST_OS=linux`.
+Create the folder, then add the server with one command (macOS or Linux):
 
 ```bash
 mkdir -p ~/Deckwright/Decks ~/Deckwright/Templates ~/Deckwright/Inbox
-claude mcp add deckwright -- docker run -i --rm --init --read-only --tmpfs /tmp:size=512m --cap-drop ALL --security-opt no-new-privileges:true --mount "type=bind,source=$HOME/Deckwright,target=/data" -e "DECKWRIGHT_HOST_DIR=$HOME/Deckwright" -e DECKWRIGHT_HOST_OS=darwin -e "DECKWRIGHT_HOST_HOME=$HOME" -e DECKWRIGHT_OUTPUT_DIR=/data/Decks -e DECKWRIGHT_PACKS_DIR=/data/Templates ghcr.io/digitalchild/deckwright:latest deckwright mcp
+claude mcp add deckwright -- docker run -i --rm --init --read-only --tmpfs /tmp:size=512m --cap-drop ALL --security-opt no-new-privileges:true --mount "type=bind,source=$HOME/Deckwright,target=/data" -e "DECKWRIGHT_HOST_DIR=$HOME/Deckwright" -e "DECKWRIGHT_HOST_OS=$(uname | tr A-Z a-z)" -e "DECKWRIGHT_HOST_HOME=$HOME" -e DECKWRIGHT_OUTPUT_DIR=/data/Decks -e DECKWRIGHT_PACKS_DIR=/data/Templates ghcr.io/digitalchild/deckwright:latest deckwright mcp
 ```
 
 ### Build it yourself
