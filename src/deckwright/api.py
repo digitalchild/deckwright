@@ -30,7 +30,7 @@ ALLOW_SLIDES = os.environ.get("DECKWRIGHT_ALLOW_SLIDES") == "1"
 
 app = FastAPI(
     title="Deckwright",
-    version="0.2.0",
+    version="0.3.0",
     description="Create branded presentations from a template pack.",
 )
 

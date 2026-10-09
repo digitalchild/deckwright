@@ -743,6 +743,19 @@ class DeckBuilder:
 
     # ---- output
 
+    def _register_notes_master(self) -> None:
+        """python-pptx adds a notes master when the template has none, but does not list it in
+        presentation.xml. PowerPoint accepts that; Keynote refuses the file as invalid."""
+        pres = self.prs.part._element
+        if pres.find(qn("p:notesMasterIdLst")) is not None:
+            return
+        rid = next((r.rId for r in self.prs.part.rels.values() if r.reltype == RT.NOTES_MASTER), None)
+        if rid is None:
+            return
+        lst = etree.Element(qn("p:notesMasterIdLst"))
+        etree.SubElement(lst, qn("p:notesMasterId")).set(qn("r:id"), rid)
+        pres.find(qn("p:sldMasterIdLst")).addnext(lst)  # the schema order puts it right after
+
     def build(self, title: str | None = None, author: str | None = None) -> BuildResult:
         lst = self.prs.slides._sldIdLst
         for sld in self._orig_ids:
@@ -750,6 +763,7 @@ class DeckBuilder:
             lst.remove(sld)
             self.prs.part.drop_rel(rid)
         self._orig_ids = []
+        self._register_notes_master()
         if title:
             self.prs.core_properties.title = title
         if author:

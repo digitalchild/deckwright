@@ -14,6 +14,19 @@ A template pack describes one template's layouts, fields and brand. A heuristic 
 - Images from a URL, a data URI, a local path, a text placeholder, or an Excalidraw diagram.
 - PNG previews through LibreOffice, with the template's own fonts loaded.
 
+## Get started
+
+Pick the option that fits you.
+
+| Option | For | Needs |
+|---|---|---|
+| [Desktop extension, container](#claude-desktop-extension-docker) | People who do not use a terminal | Docker Desktop, Claude Desktop |
+| [Claude Code, container](#claude-code-with-the-container) | Claude Code users without Python | Docker |
+| Desktop extension, checkout ([MCP server](#mcp-server)) | Developers | Git checkout, uv |
+| Claude Code, checkout ([MCP server](#mcp-server), `deckwright mcp`) | Developers | Git checkout, uv |
+| Local HTTP API ([HTTP API](#http-api), `deckwright serve`) | Scripts and other tools | Git checkout, uv |
+| Team server ([Run with Docker](#run-with-docker), `deckwright server` image) | A shared, signed-in server | Docker, a domain, Google OAuth |
+
 ## Install
 
 ```bash
@@ -194,7 +207,7 @@ Streamable HTTP:
 uv run deckwright mcp --http --port 8765
 ```
 
-Claude Desktop extension (`.mcpb`): it survives restarts, unlike a manual `claude_desktop_config.json` entry, and runs the server from this checkout so code changes apply after a restart with no rebuild.
+Checkout extension, for developers (`.mcpb`): it survives restarts, unlike a manual `claude_desktop_config.json` entry, and runs the server from this checkout so code changes apply after a restart with no rebuild. For the Docker-backed extension that needs no terminal, see [Claude Desktop extension (Docker)](#claude-desktop-extension-docker).
 
 ```bash
 uv run python scripts/build_mcpb.py
@@ -227,6 +240,64 @@ Resources: `deckwright://templates`, `deckwright://templates/{template}/layouts`
 
 For remote use, with Google sign-in and a public URL, see [Run with Docker](#run-with-docker).
 
+## Claude Desktop extension (Docker)
+
+`deckwright.mcpb` is a Claude Desktop extension that runs the Docker image `ghcr.io/digitalchild/deckwright` over stdio. It needs only Docker Desktop and Claude Desktop. It works on macOS and Windows (Windows is untested). Each GitHub Release has the file: https://github.com/digitalchild/deckwright/releases/latest
+
+### Install
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it.
+2. Download `deckwright.mcpb` from the [latest release](https://github.com/digitalchild/deckwright/releases/latest).
+3. Double-click it, or use Claude Desktop > Settings > Extensions > Install extension.
+4. Pick a folder. The default is `~/Deckwright`.
+5. Start a chat and ask for a deck.
+
+The first start downloads the image, about 1 GB. Claude shows Deckwright as failed while it downloads. Wait a few minutes, then restart Claude. `download.log` in your folder shows the progress.
+
+Docker Desktop is free for small companies, education and personal use. Larger companies need a paid plan.
+
+### The folder
+
+```
+~/Deckwright/
+  Decks/        built decks, diagrams and previews
+  Templates/    template packs, one folder each
+  Inbox/        put a .pptx or an image here, then ask Claude to use it
+```
+
+Deckwright can see only this folder. It refuses paths outside it.
+
+### Add a template
+
+Put the `.pptx` in `Inbox/`. Then ask Claude:
+
+> Add Inbox/acme.pptx as a template called acme
+
+### Fonts
+
+The container cannot see fonts installed on your computer. Put the font files in `Inbox/` too, and tell Claude to use them. The `add_template` tool has a `font_dirs` argument for this.
+
+### Share a pack
+
+Copy the pack's folder from your `Templates/` to your teammate's `Templates/`.
+
+### Claude Code, with the container
+
+Create the folder, then add the server with one command (macOS or Linux). `--user` runs the server as you, so it can write to your folder on Linux too:
+
+```bash
+mkdir -p ~/Deckwright/Decks ~/Deckwright/Templates ~/Deckwright/Inbox
+claude mcp add deckwright -- docker run -i --rm --init --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:size=512m --cap-drop ALL --security-opt no-new-privileges:true --mount "type=bind,source=$HOME/Deckwright,target=/data" -e "DECKWRIGHT_HOST_DIR=$HOME/Deckwright" -e "DECKWRIGHT_HOST_OS=$(uname | tr A-Z a-z)" -e "DECKWRIGHT_HOST_HOME=$HOME" -e DECKWRIGHT_OUTPUT_DIR=/data/Decks -e DECKWRIGHT_PACKS_DIR=/data/Templates ghcr.io/digitalchild/deckwright:latest deckwright mcp
+```
+
+### Build it yourself
+
+```bash
+uv run python scripts/build_mcpb.py --container ghcr.io/digitalchild/deckwright@sha256:<digest>
+```
+
+Without `--container`, the script builds the checkout extension as before.
+
 ## Run with Docker
 
 Deckwright publishes a Docker image so a team can run one shared server. Claude (desktop or claude.ai) connects to it over the network, signs in with Google, and builds decks with no local install.
@@ -245,7 +316,17 @@ docker run --rm -p 127.0.0.1:8765:8765 \
 
 **Warning: this is for a laptop only.** `DECKWRIGHT_INSECURE_NO_AUTH=1` turns off sign-in. Anyone who can reach the port can use the server. Only run it this way behind the loopback address, on a machine you control.
 
-Add the connector in Claude at `http://localhost:8765/mcp`. Use `localhost`, not `127.0.0.1`: the server accepts only the host name in `DECKWRIGHT_PUBLIC_URL`. See [docs/connect-claude.md](docs/connect-claude.md) for the connector steps.
+This works only for Claude Code:
+
+```bash
+claude mcp add --transport http deckwright http://localhost:8765/mcp
+```
+
+Use `localhost`, not `127.0.0.1`: the server accepts only the host name in `DECKWRIGHT_PUBLIC_URL`.
+
+Claude Desktop and claude.ai cannot reach `localhost`, because they connect to custom connectors from Anthropic's cloud. For Claude Desktop, use the [extension](#claude-desktop-extension-docker).
+
+This quick try is remote mode. It has only the built-in `sample` template, and no template admin tools.
 
 Outside remote mode, the server listens only on a loopback address, because local mode trusts every caller. In remote mode, it refuses to start without auth unless `DECKWRIGHT_INSECURE_NO_AUTH=1` is set. Even then, remote mode hides the template admin tools and refuses local image paths.
 
@@ -401,6 +482,8 @@ print(result.warnings)
 | `DECKWRIGHT_ALLOW_LOCAL_FILES` | unset | `1` lets API requests read local image paths |
 | `DECKWRIGHT_ASSET_DIRS` | unset | Folders the API may read images from |
 | `DECKWRIGHT_ALLOW_PRIVATE_URLS` | unset | `1` lets API requests fetch images from private or loopback addresses |
+| `DECKWRIGHT_HOST_DIR` | unset | Host path of the data folder mounted at `/data` in the container. Maps paths in and out of the container, so Claude sees host paths. The extension sets it. See [Claude Desktop extension (Docker)](#claude-desktop-extension-docker) |
+| `DECKWRIGHT_PACKS_DIR` | `~/.config/deckwright/templates` | Where new template packs are written |
 | `DECKWRIGHT_SOFFICE` | auto-detected | Path to the LibreOffice binary |
 | `DECKWRIGHT_CACHE` | `~/.cache/deckwright` | Private LibreOffice profile, loaded with the pack's own fonts |
 | `XDG_CONFIG_HOME` | `~/.config` | Base folder for `deckwright/templates/`, the installed template packs |

@@ -25,7 +25,7 @@ FONT_DIRS = [Path.home() / "Library" / "Fonts", Path("/Library/Fonts"), Path("/S
 
 
 def packs_root() -> Path:
-    return packmod.CONFIG_DIR / "templates"
+    return packmod.packs_dir()
 
 
 # --------------------------------------------------------------------------- fonts
