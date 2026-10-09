@@ -1,0 +1,11 @@
+src/deckwright/hostpaths.py
+  ai_agent 83-84
+tests/test_hostpaths.py
+  ai_agent 148-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a65762bb12e3a785e6b907bbb1c78a8204dccb62",
+  "prompts": {}
+}
