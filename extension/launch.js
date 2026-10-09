@@ -67,23 +67,33 @@ function dockerEnv(docker) {
 }
 
 // The first download is about 1 GB, longer than Claude waits for a server to start. Run it on its own,
-// so it keeps going after Claude gives up on this launch, and log it in the folder.
+// so it keeps going after Claude gives up on this launch, and log it in the folder. Returns the last line
+// of an earlier download that ended without the image, so the person can see why.
 function pullInBackground(docker, env, dir) {
   const pidFile = path.join(dir, "download.pid");
+  const logFile = path.join(dir, "download.log");
   try {
     // A pid file older than an hour is stale: the pull has ended, and its pid may belong to another process.
     if (Date.now() - fs.statSync(pidFile).mtimeMs < 60 * 60 * 1000) {
       process.kill(Number(fs.readFileSync(pidFile, "utf8")), 0);
-      return; // a download from an earlier start is still running
+      return ""; // a download from an earlier start is still running
     }
   } catch {
     // no download running
   }
-  const log = fs.openSync(path.join(dir, "download.log"), "w");
+  let failed = "";
+  try {
+    failed = fs.readFileSync(logFile, "utf8").trim().split("\n").pop();
+  } catch {
+    // no earlier download
+  }
+  const log = fs.openSync(logFile, "w");
   const pull = spawn(docker, ["pull", IMAGE], { detached: true, stdio: ["ignore", log, log], env, windowsHide: true });
   fs.closeSync(log);
-  fs.writeFileSync(pidFile, String(pull.pid));
+  pull.on("error", () => {}); // the message below already tells the person to check the log
+  if (pull.pid) fs.writeFileSync(pidFile, String(pull.pid));
   pull.unref();
+  return failed;
 }
 
 function main() {
@@ -113,8 +123,9 @@ function main() {
   }
 
   if (spawnSync(docker, ["image", "inspect", IMAGE], { stdio: "ignore", env }).status !== 0) {
-    pullInBackground(docker, env, dir);
-    fail("Deckwright is downloading its image (about 1 GB, first start only). Wait a few minutes, then restart "
+    const failed = pullInBackground(docker, env, dir);
+    fail((failed ? `the last download did not finish (${failed}). Trying again. ` : "")
+      + "Deckwright is downloading its image (about 1 GB, first start only). Wait a few minutes, then restart "
       + `Claude. Progress is in ${path.join(dir, "download.log")}.`);
   }
   for (const name of ["download.log", "download.pid"]) {
