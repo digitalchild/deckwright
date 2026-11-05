@@ -141,3 +141,12 @@ def test_find_fonts_finds_manrope(template, tmp_path):
     found = packs.find_fonts({"Manrope"}, extra=[font_dir])
     assert "Manrope" in found
     assert found["Manrope"]
+
+
+def test_find_fonts_matches_weight_named_family(template, tmp_path):
+    # PowerPoint names weights as families ("Manrope Regular"); the file reports "Manrope" + style
+    font_dir = tmp_path / "fonts"
+    font_dir.mkdir()
+    shutil.copy2(template.fonts / "Manrope-Regular.ttf", font_dir / "Manrope-Regular.ttf")
+    found = packs.find_fonts({"Manrope Regular"}, extra=[font_dir])
+    assert found.get("Manrope Regular")

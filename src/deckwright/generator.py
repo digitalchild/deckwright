@@ -720,6 +720,8 @@ NAME_HINTS = [
     (r"timeline", ("timeline", (), 0.8)),
     (r"thank|closing|end", ("closing", (), 0.8)),
 ]
+STAT_HINT = r"big[ _-]?number|(?<![a-z])(stat|metric|kpi)(?![a-z])"
+STAT_SLOTS = {"title", "subtitle", "body", "label"}
 
 
 def _name_hint(name: str, d: Draft) -> tuple[str, tuple[str, ...], float] | None:
@@ -728,7 +730,31 @@ def _name_hint(name: str, d: Draft) -> tuple[str, tuple[str, ...], float] | None
     for pat, hint in NAME_HINTS:
         if re.search(pat, low):
             return hint
+    # one big number and its label; several numbers come out as items and are classified by slots
+    if re.search(STAT_HINT, low) and not d.items and "title" in {f.name for f in d.fields} \
+            and {f.name for f in d.fields} <= STAT_SLOTS:
+        return "stat", (), 0.8
     return None
+
+
+def _as_stat(d: Draft) -> None:
+    """Rename a title + subtitle pair to the shared ``stat`` slots: value + label."""
+    if any(f.name == "value" for f in d.fields):
+        return
+    rename = {"title": "value", "subtitle": "label", "body": "label"}
+    if any(f.name == "label" for f in d.fields):
+        rename = {"title": "value"}
+    used: set[str] = set()
+    fields = []
+    for f in d.fields:
+        new = rename.get(f.name, f.name)
+        new = f.name if new in used else new
+        used.add(new)
+        fields.append(f.model_copy(update={"name": new}) if new != f.name else f)
+    d.fields = fields
+    names = {f.name for f in fields}
+    d.example = {(rename[k] if k in rename and rename[k] in names and k not in names else k): v
+                 for k, v in d.example.items()}
 
 
 DEFAULT_FONTS = {"Arial", "Calibri", "Helvetica", "Helvetica Neue", "Times New Roman", "Cambria", "Aptos",
@@ -970,6 +996,8 @@ def generate(pptx: str | Path, pack_id: str, name: str | None = None) -> Pack:
         if kind == "timeline" and items_has(d, "title") and not items_has(d, "label"):
             d.items = {("label" if k == "title" else k): v for k, v in d.items.items()}
             d.item_examples = [{("label" if k == "title" else k): v for k, v in e.items()} for e in d.item_examples]
+        if kind == "stat":
+            _as_stat(d)
         if kind in ("section", "title", "statement"):
             d.fields = [f.model_copy(update={"name": "subtitle"}) if f.name == "body" and
                         not any(x.name == "subtitle" for x in d.fields) else f for f in d.fields]
