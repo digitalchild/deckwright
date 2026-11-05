@@ -40,6 +40,30 @@ def _font_name(path: Path) -> tuple[str, str] | None:
         return None
 
 
+def _font_aliases(path: Path) -> set[str]:
+    """Lower-cased family names a font file answers to.
+
+    PowerPoint often names a weight as its own family ("Zalando Sans Medium"),
+    while the file reports the typographic family ("Zalando Sans") plus a style,
+    or, for a variable font, a list of named instances.
+    """
+    from PIL import ImageFont
+
+    try:
+        font = ImageFont.truetype(str(path), 12)
+    except OSError:
+        return set()
+    family, style = font.getname()
+    if not family:
+        return set()
+    names = {family, f"{family} {style}"}
+    try:
+        names |= {f"{family} {v.decode() if isinstance(v, bytes) else v}" for v in font.get_variation_names()}
+    except (OSError, ValueError, AttributeError):  # not a variable font, or FreeType without variation support
+        pass
+    return {n.lower() for n in names}
+
+
 def find_fonts(families: set[str], extra: list[Path] = ()) -> dict[str, list[Path]]:
     """Font files on this machine whose family name matches, by family."""
     found: dict[str, list[Path]] = {}
@@ -50,9 +74,8 @@ def find_fonts(families: set[str], extra: list[Path] = ()) -> dict[str, list[Pat
         for path in root.rglob("*"):
             if path.suffix.lower() not in (".ttf", ".otf"):
                 continue
-            name = _font_name(path)
-            if name and name[0].lower() in wanted:
-                found.setdefault(wanted[name[0].lower()], []).append(path)
+            for alias in _font_aliases(path) & wanted.keys():
+                found.setdefault(wanted[alias], []).append(path)
     return found
 
 
