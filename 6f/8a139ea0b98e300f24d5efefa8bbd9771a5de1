@@ -1,0 +1,21 @@
+tests/test_packs.py
+  s_e5cc3adb768f3e::t_069cf05847c1fc 144-152
+src/deckwright/packs.py
+  s_e5cc3adb768f3e::t_7a168efd4640d6 43-66,77-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f8a139ea0b98e300f24d5efefa8bbd9771a5de1",
+  "prompts": {},
+  "sessions": {
+    "s_e5cc3adb768f3e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50b9732b-a9f1-4249-8eb7-b18ae457c030",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jamie Madden <jamie@M5SIXFOUR.local>"
+    }
+  }
+}
