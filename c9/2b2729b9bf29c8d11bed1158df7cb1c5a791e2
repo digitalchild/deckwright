@@ -1,0 +1,21 @@
+tests/test_stat_hint.py
+  s_e5cc3adb768f3e::t_be5db922449919 1-43
+src/deckwright/generator.py
+  s_e5cc3adb768f3e::t_755fa97b6c9291 723-724,733-736,740-759,999-1000
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c92b2729b9bf29c8d11bed1158df7cb1c5a791e2",
+  "prompts": {},
+  "sessions": {
+    "s_e5cc3adb768f3e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50b9732b-a9f1-4249-8eb7-b18ae457c030",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jamie Madden <jamie@M5SIXFOUR.local>"
+    }
+  }
+}
