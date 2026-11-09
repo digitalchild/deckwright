@@ -95,7 +95,7 @@ uv run deckwright template update acme
 
 This keeps the reviewed parts of layouts whose targets still exist in the new file, and lists the rest as issues.
 
-Packs live at `~/.config/deckwright/templates/<id>/` (or a path list in `DECKWRIGHT_TEMPLATES`). `pack.json` inside a pack is machine-owned: tools write it, and it is never edited by hand. If your source is a Google Slides deck, export it as `.pptx` first (File > Download > Microsoft PowerPoint), then run `template add` on the exported file.
+`template add` writes packs to `~/.config/deckwright/templates/<id>/`, or to the folder in `DECKWRIGHT_PACKS_DIR` when it is set. Packs are also read from a path list in `DECKWRIGHT_TEMPLATES`. To make packs you add with the command line show up in the Claude Desktop extension, set `DECKWRIGHT_PACKS_DIR` to the extension's `Templates` folder (see [docs/connect-claude.md](docs/connect-claude.md)). `pack.json` inside a pack is machine-owned: tools write it, and it is never edited by hand. If your source is a Google Slides deck, export it as `.pptx` first (File > Download > Microsoft PowerPoint), then run `template add` on the exported file.
 
 ## Deck spec
 
