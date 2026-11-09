@@ -1,0 +1,23 @@
+pyproject.toml
+  s_e5cc3adb768f3e::t_917ea8bb72b6b2 3
+src/deckwright/api.py
+  s_e5cc3adb768f3e::t_6985ad943c5d9a 33
+uv.lock
+  s_e5cc3adb768f3e::t_acdc9a8e436d19 380
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e7eb31f46167c3c413aa25f5d47164ee3acdd314",
+  "prompts": {},
+  "sessions": {
+    "s_e5cc3adb768f3e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50b9732b-a9f1-4249-8eb7-b18ae457c030",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jamie Madden <jamie@M5SIXFOUR.local>"
+    }
+  }
+}
