@@ -22,6 +22,8 @@ Your folder has three parts:
 
 Deckwright can see only this folder. To add a template, put the `.pptx` in `Inbox`. Then ask Claude: "Add Inbox/acme.pptx as a template called acme". The container cannot see fonts installed on your computer. Put the font files in `Inbox` too, and tell Claude to use them. To share a template with a teammate, copy its folder from your `Templates` to theirs.
 
+The `deckwright` command line keeps its templates somewhere else, in `~/.config/deckwright/templates`, so templates you add with it do not show up in Claude. To use one in Claude, copy its folder into `Templates`. To make the command line save new templates where Claude can see them, set `DECKWRIGHT_PACKS_DIR` to your `Templates` folder, for example `export DECKWRIGHT_PACKS_DIR=~/Deckwright/Templates` in your shell profile.
+
 If you use a team server, skip this part and follow the steps below.
 
 ## 1. Open Claude
