@@ -1,0 +1,21 @@
+README.md
+  s_e5cc3adb768f3e::t_7532b05c200776 98
+docs/packs.md
+  s_e5cc3adb768f3e::t_7532b05c200776 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7154d81ca3aeea9c3c04d3fa256d5e01d7fd4f54",
+  "prompts": {},
+  "sessions": {
+    "s_e5cc3adb768f3e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50b9732b-a9f1-4249-8eb7-b18ae457c030",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jamie Madden <jamie@M5SIXFOUR.local>"
+    }
+  }
+}
