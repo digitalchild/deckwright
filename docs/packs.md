@@ -13,7 +13,7 @@ A template pack is the machine-owned description of one `.pptx` template. Deckwr
   fonts/                optional static font files for previews and diagrams
 ```
 
-Packs are discovered from, in order: each path in `DECKWRIGHT_TEMPLATES` (colon-separated, each entry a pack folder or a folder of packs), then `~/.config/deckwright/templates/`, then the packs built into the Deckwright package (the `sample` pack). `DECKWRIGHT_TEMPLATE` picks the default pack id when more than one pack is installed.
+Packs are discovered from, in order: each path in `DECKWRIGHT_TEMPLATES` (colon-separated, each entry a pack folder or a folder of packs), then the `DECKWRIGHT_PACKS_DIR` folder (where new packs are written) when it is set, then `~/.config/deckwright/templates/`, then the packs built into the Deckwright package (the `sample` pack). `DECKWRIGHT_TEMPLATE` picks the default pack id when more than one pack is installed.
 
 `pack.json` records the SHA-256 of `template.pptx` at generation time. If the `.pptx` changes on disk, Deckwright refuses to build from that pack and asks for `deckwright template update <id>`.
 
